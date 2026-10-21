@@ -1,0 +1,14 @@
+{
+  "name": "colabus-web",
+  "private": true,
+  "type": "module",
+  "description": "Interfaz web de la simulación de colas del transporte público con escena 3D local (Three.js).",
+  "scripts": {
+    "test": "node --test",
+    "recursos": "node scripts/vendor-three.mjs && node scripts/generar-recursos.mjs && node scripts/verificar-recursos.mjs",
+    "verificar": "node scripts/verificar-recursos.mjs"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  }
+}

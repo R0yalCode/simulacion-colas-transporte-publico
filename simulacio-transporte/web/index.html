@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ColaBus · Simulación de colas del transporte público</title>
+  <meta name="description" content="Simulación de eventos discretos de una parada de autobuses con escena animada, indicadores en vivo y análisis de resultados.">
+  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a101b'/%3E%3Crect x='6' y='9' width='20' height='14' rx='3' fill='%2343d1d0'/%3E%3Crect x='8' y='12' width='10' height='5' rx='1.5' fill='%230a101b'/%3E%3Ccircle cx='11' cy='24' r='2.4' fill='%2343d1d0'/%3E%3Ccircle cx='21' cy='24' r='2.4' fill='%2343d1d0'/%3E%3C/svg%3E">
+</head>
+<body>
+  <header class="cabecera">
+    <div class="marca">
+      <svg class="marca__logo" viewBox="0 0 40 40" aria-hidden="true" focusable="false">
+        <rect x="0" y="0" width="40" height="40" rx="10" fill="#101c2f"></rect>
+        <rect x="7" y="10" width="26" height="17" rx="4" fill="#43d1d0"></rect>
+        <rect x="10" y="13.5" width="12" height="6" rx="2" fill="#0a101b"></rect>
+        <rect x="24" y="13.5" width="6" height="6" rx="2" fill="#0a101b"></rect>
+        <circle cx="13" cy="30" r="3" fill="#43d1d0"></circle>
+        <circle cx="27" cy="30" r="3" fill="#43d1d0"></circle>
+      </svg>
+      <div>
+        <h1>ColaBus · Simulación de colas del transporte público</h1>
+        <p class="subtitulo">Eventos discretos · parada única · cola FIFO · λ, h y capacidad configurables</p>
+      </div>
+    </div>
+    <div class="cabecera__estado">
+      <span id="velocidad-chip" class="chip chip--cian">1× · 2,0 min/s</span>
+      <span id="estado-pill" class="pill" data-fase="sin_datos" role="status" aria-live="polite">Sin ejecución</span>
+    </div>
+  </header>
+
+  <div id="banner-error" class="banner" hidden role="alert">
+    <span id="banner-error-texto"></span>
+    <button id="banner-error-reintentar" class="boton boton--fantasma" hidden>Reintentar</button>
+    <button id="banner-error-cerrar" class="boton-icono" aria-label="Cerrar aviso">×</button>
+  </div>
+  <p id="aviso-advertencias" class="aviso aviso--advertencia" hidden></p>
+
+  <div class="disposicion">
+    <aside class="panel panel--controles" aria-label="Configuración y reproducción">
+      <section>
+        <h2 class="panel__titulo">Parámetros del modelo</h2>
+        <p id="info-modelo" class="info-modelo">Cargando parámetros…</p>
+        <form id="form-parametros" novalidate>
+          <div id="campos" class="campos"></div>
+          <p id="error-config" class="aviso aviso--error" hidden></p>
+          <button id="btn-iniciar" type="submit" class="boton boton--primario">Iniciar simulación</button>
+        </form>
+      </section>
+
+      <section class="reproduccion">
+        <h2 class="panel__titulo">Reproducción</h2>
+        <div class="bloque">
+          <span class="campo__etiqueta" id="etiqueta-velocidad">Velocidad de reproducción</span>
+          <div id="velocidad-segmentada" class="segmentado" role="group" aria-labelledby="etiqueta-velocidad">
+            <button type="button" class="velocidad-boton" data-velocidad="0.5" aria-pressed="false">0.5×</button>
+            <button type="button" class="velocidad-boton" data-velocidad="1" aria-pressed="true">1×</button>
+            <button type="button" class="velocidad-boton" data-velocidad="1.5" aria-pressed="false">1.5×</button>
+            <button type="button" class="velocidad-boton" data-velocidad="2" aria-pressed="false">2×</button>
+            <button type="button" class="velocidad-boton" data-velocidad="2.5" aria-pressed="false">2.5×</button>
+          </div>
+          <p class="campo__ayuda">Solo cambia el ritmo visual (1× = 2 minutos simulados por segundo real). Nunca altera los cálculos de la ejecución.</p>
+        </div>
+
+        <div class="botones">
+          <button id="btn-pausar" type="button" class="boton" disabled>Reanudar</button>
+          <button id="btn-reiniciar" type="button" class="boton" disabled>Reiniciar</button>
+        </div>
+
+        <div class="bloque">
+          <label for="linea-tiempo" class="campo__etiqueta">Línea de tiempo simulado</label>
+          <input type="range" id="linea-tiempo" min="0" max="1000" step="1" value="0" disabled
+                 aria-label="Desplazamiento por el tiempo simulado" aria-valuetext="0 minutos">
+          <div class="linea-tiempo__valores">
+            <span id="tiempo-actual" class="reloj">00:00</span>
+            <span id="tiempo-total" class="reloj reloj--tenue">—</span>
+          </div>
+        </div>
+
+        <div class="leyenda">
+          <h3>Leyenda de la escena</h3>
+          <ul>
+            <li><span class="leyenda__punto leyenda__punto--espera"></span>Pasajeros en espera (fila FIFO)</li>
+            <li><span class="leyenda__punto leyenda__punto--abordando"></span>Autobús detenido o abordando</li>
+            <li><span class="leyenda__punto leyenda__punto--completado"></span>Abordaje completado y salida</li>
+            <li><span class="leyenda__punto leyenda__punto--alerta"></span>Alertas: autobús sin asientos, cola oculta</li>
+          </ul>
+        </div>
+      </section>
+    </aside>
+
+    <main class="contenido">
+      <section class="tarjetas" aria-label="Indicadores en vivo del instante actual">
+        <article class="tarjeta">
+          <h3>Pasajeros llegados</h3>
+          <p class="tarjeta__valor" id="stat-llegados">—</p>
+          <p class="tarjeta__pie">acumulado hasta el instante actual</p>
+        </article>
+        <article class="tarjeta">
+          <h3>Pasajeros esperando</h3>
+          <p class="tarjeta__valor tarjeta__valor--espera" id="stat-esperando">—</p>
+          <p class="tarjeta__pie">tamaño instantáneo de la cola</p>
+        </article>
+        <article class="tarjeta">
+          <h3>Pasajeros transportados</h3>
+          <p class="tarjeta__valor tarjeta__valor--verde" id="stat-transportados">—</p>
+          <p class="tarjeta__pie">pasajeros que ya abordaron</p>
+        </article>
+        <article class="tarjeta">
+          <h3>Autobuses llegados</h3>
+          <p class="tarjeta__valor tarjeta__valor--amarillo" id="stat-autobuses">—</p>
+          <p class="tarjeta__pie">llegadas de autobús acumuladas</p>
+        </article>
+        <article class="tarjeta tarjeta--secundaria">
+          <h3>Espera media</h3>
+          <p class="tarjeta__valor" id="stat-espera-media">—</p>
+          <p class="tarjeta__pie">media de los pasajeros ya abordados</p>
+        </article>
+        <article class="tarjeta tarjeta--secundaria">
+          <h3>Cola media temporal</h3>
+          <p class="tarjeta__valor" id="stat-cola-media">—</p>
+          <p class="tarjeta__pie">promedio ∫cola(t)dt / t en [0, t]</p>
+        </article>
+        <article class="tarjeta tarjeta--secundaria">
+          <h3>Capacidad utilizada</h3>
+          <p class="tarjeta__valor" id="stat-ocupacion">—</p>
+          <p class="tarjeta__pie">asientos ocupados / capacidad transportada</p>
+        </article>
+        <article class="tarjeta tarjeta--secundaria">
+          <h3>Tiempo simulado</h3>
+          <p class="tarjeta__valor" id="stat-tiempo">—</p>
+          <p class="tarjeta__pie">instante actual / duración del experimento</p>
+        </article>
+      </section>
+
+      <section class="panel escena-panel" aria-label="Escena de la parada">
+        <div class="panel__cabecera panel__cabecera--fila">
+          <div>
+            <h2>Escena de la parada · 3D</h2>
+            <p>Los pasajeros, la cola, el autobús y el abordaje reflejan el estado real del motor en el instante seleccionado.</p>
+          </div>
+          <div class="escena__camaras" role="group" aria-label="Cámara de la escena">
+            <button id="btn-camara-calle" type="button" class="camara-boton activo" data-camara="calle" aria-pressed="true">Calle</button>
+            <button id="btn-camara-elevada" type="button" class="camara-boton" data-camara="elevada" aria-pressed="false">Elevada</button>
+          </div>
+        </div>
+        <div class="escena__marco">
+          <canvas id="escena" class="escena" role="img" aria-label="Escena 3D de la parada de autobuses sin ejecución"></canvas>
+          <div id="escena-hud" class="escena__hud" hidden>
+            <span class="escena__chip"><i class="escena__punto escena__punto--espera"></i>En espera <strong id="escena-hud-espera">0</strong></span>
+            <span class="escena__chip"><i class="escena__punto escena__punto--verde"></i>Transportados <strong id="escena-hud-transportados">0</strong></span>
+            <span class="escena__chip"><i class="escena__punto escena__punto--amarillo"></i>Autobuses <strong id="escena-hud-autobuses">0</strong></span>
+            <span id="escena-hud-reloj" class="escena__reloj">00:00</span>
+          </div>
+          <div id="escena-hud-bus" class="escena__bus" hidden>
+            <span id="escena-hud-fase" class="escena__fase"></span>
+            <span class="escena__barra" aria-hidden="true"><span id="escena-hud-barra" class="escena__barra-relleno"></span></span>
+            <span id="escena-hud-ocupacion" class="escena__ocupacion"></span>
+          </div>
+          <div id="escena-aviso" class="escena__aviso" data-estado="cargando">
+            <p class="escena__aviso-titulo">Preparando la escena 3D</p>
+            <p class="escena__aviso-detalle">Cargando los modelos locales de autobús y pasajeros.</p>
+          </div>
+          <p class="escena__pista">Arrastre para orbitar · rueda para acercar</p>
+        </div>
+      </section>
+
+      <section class="graficos" aria-label="Gráficos en vivo">
+        <article class="panel grafico-panel">
+          <div class="panel__cabecera">
+            <h2>Evolución de la cola</h2>
+            <p>Pasajeros en espera frente al tiempo simulado (pasos discretos por evento).</p>
+          </div>
+          <canvas id="grafico-cola" role="img" aria-label="Gráfico de evolución de la cola"></canvas>
+        </article>
+        <article class="panel grafico-panel">
+          <div class="panel__cabecera">
+            <h2>Llegadas y abordajes acumulados</h2>
+            <p>Demanda acumulada frente a pasajeros transportados y pendientes.</p>
+          </div>
+          <canvas id="grafico-acumulados" role="img" aria-label="Gráfico de llegadas y abordajes acumulados"></canvas>
+        </article>
+        <article class="panel grafico-panel">
+          <div class="panel__cabecera">
+            <h2>Tiempos de espera</h2>
+            <p>Esperas individuales de pasajeros abordados y su media acumulada (los que siguen esperando al final quedan censurados).</p>
+          </div>
+          <canvas id="grafico-esperas" role="img" aria-label="Gráfico de tiempos de espera"></canvas>
+        </article>
+        <article class="panel grafico-panel">
+          <div class="panel__cabecera">
+            <h2>Capacidad de los autobuses</h2>
+            <p>Composición de cada autobús en su paso por la parada (últimos 14 llegados).</p>
+          </div>
+          <canvas id="grafico-capacidad" role="img" aria-label="Gráfico de capacidad de los autobuses"></canvas>
+        </article>
+      </section>
+
+      <section class="panel" aria-label="Resultados finales">
+        <div class="panel__cabecera">
+          <h2>Resultados finales de la ejecución</h2>
+          <p>Totales precalculados por el motor para toda la ejecución. Las tarjetas superiores muestran el instante actual.</p>
+        </div>
+        <div id="resultados-finales" class="resultados-vacio">Aún no se ha ejecutado ninguna simulación.</div>
+        <p id="resultado-balance" class="balance" hidden></p>
+        <p id="resultado-semilla" class="nota" hidden></p>
+        <div class="exportacion">
+          <button id="btn-csv-eventos" type="button" class="boton" disabled>Exportar eventos (CSV)</button>
+          <button id="btn-csv-resumen" type="button" class="boton" disabled>Exportar resumen (CSV)</button>
+        </div>
+      </section>
+
+      <section class="panel" aria-label="Réplicas en modo acelerado">
+        <div class="panel__cabecera">
+          <h2>Réplicas · modo acelerado</h2>
+          <p>Ejecuta varias repeticiones reproducibles sin animación y promedia los resultados (no altera la ejecución en curso).</p>
+        </div>
+        <button id="btn-replicas" type="button" class="boton" disabled>Ejecutar réplicas (modo acelerado)</button>
+        <p id="replicas-estado" class="nota">Pendiente. Las réplicas promedian varias semillas sin animación y no alteran la ejecución en curso.</p>
+        <div id="replicas-contenido"></div>
+      </section>
+
+      <section class="panel" aria-label="Registro de eventos">
+        <div class="panel__cabecera">
+          <h2>Registro de eventos</h2>
+          <p>Últimos eventos reales hasta el instante actual (más reciente primero).</p>
+        </div>
+        <ol id="registro" class="registro"></ol>
+      </section>
+    </main>
+  </div>
+
+  <footer class="pie">
+    <p>Simulación Estocástica de Transporte Público · versión 3.0 · motor Python (eventos discretos) + interfaz web HTML/CSS/JS · proyecto académico</p>
+  </footer>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three/three.module.js",
+        "three/addons/": "/vendor/three/addons/"
+      }
+    }
+  </script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
