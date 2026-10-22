@@ -271,11 +271,33 @@ class GraficoBase {
 
 export class GraficoCola extends GraficoBase {
   _dibujarContenido(ctx, area) {
-    const { serie, tiempo, duracion, colaActual } = this.datos;
+    const { serie, tiempo, duracion, colaActual, limiteCola } = this.datos;
     let colaMax = 1;
     for (const [, q] of serie) if (q > colaMax) colaMax = q;
-    const yMax = Math.max(1, Math.ceil((colaMax * 1.15) / 5) * 5);
+    const umbral = Number(limiteCola) || 0;
+    const yMax = Math.max(1, Math.ceil((Math.max(colaMax, umbral) * 1.15) / 5) * 5);
     this._marco(area, { xMax: duracion, yMax, etiquetaY: 'pasajeros en cola (pas.)' });
+
+    // Línea de referencia del umbral operativo Qmáx.
+    if (umbral > 0) {
+      const y = this._aY(area, umbral, yMax);
+      ctx.save();
+      ctx.setLineDash([6, 5]);
+      ctx.strokeStyle = 'rgba(255, 140, 151, 0.75)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(area.x, y);
+      ctx.lineTo(area.x + area.ancho, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255, 140, 151, 0.9)';
+      ctx.font = '600 10px Inter, Segoe UI, Arial, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(`Qmáx = ${umbral}`, area.x + area.ancho - 4, Math.max(area.y + 10, y - 3));
+      ctx.restore();
+    }
+
     if (serie.length === 0) return;
 
     const x0 = this._aX(area, serie[0][0], duracion);

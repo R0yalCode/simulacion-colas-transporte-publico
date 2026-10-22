@@ -16,6 +16,7 @@ Endpoints:
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import mimetypes
 import secrets
@@ -37,6 +38,7 @@ from server.schema import (
     ParametroInvalido,
     config_desde_payload,
     construir_payload,
+    payload_escenarios,
     payload_parametros,
     payload_replicas,
 )
@@ -145,6 +147,9 @@ def _crear_manejador(raiz_web: Path) -> Type[BaseHTTPRequestHandler]:
             if ruta == "/api/parametros":
                 self._json(200, payload_parametros())
                 return
+            if ruta == "/api/escenarios":
+                self._json(200, payload_escenarios())
+                return
             if ruta.startswith("/api/"):
                 self._error(404, "Endpoint no encontrado.")
                 return
@@ -198,14 +203,28 @@ def crear_servidor(
 def main(argv: Optional[list] = None) -> None:
     """Punto de entrada del servidor web."""
     parser = argparse.ArgumentParser(
-        description="Servidor web del simulador de colas de transporte p\u00fablico."
+        description="Servidor web del simulador de colas de transporte público."
     )
     parser.add_argument("--host", default="127.0.0.1", help="Interfaz de escucha (defecto 127.0.0.1).")
     parser.add_argument("--puerto", type=int, default=8000, help="Puerto de escucha (defecto 8000).")
-    parser.add_argument("--sin-navegador", action="store_true", help="No abrir el navegador autom\u00e1ticamente.")
+    parser.add_argument("--sin-navegador", action="store_true", help="No abrir el navegador automáticamente.")
     args = parser.parse_args(argv)
 
-    servidor = crear_servidor(args.host, args.puerto)
+    try:
+        servidor = crear_servidor(args.host, args.puerto)
+    except OSError as error:
+        if error.errno in (errno.EADDRINUSE, getattr(errno, "EACCES", 0)):
+            print(
+                f"ERROR: no se puede escuchar en {args.host}:{args.puerto}.\n"
+                "El puerto ya está ocupado por otro proceso (quizá otra instancia del\n"
+                "servidor de simulación).\n"
+                f"  • Use otro puerto:  python main.py --puerto {args.puerto + 1}\n"
+                "  • O detenga la instancia anterior (Ctrl+C en su terminal).\n"
+                f"  • Para ver quién lo ocupa:  lsof -i :{args.puerto}  /  ss -ltnp | grep {args.puerto}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from error
+        raise
     url = f"http://{args.host}:{servidor.server_address[1]}/"
     print("Servidor de simulaci\u00f3n de transporte p\u00fablico")
     print(f"  Interfaz web: {url}")

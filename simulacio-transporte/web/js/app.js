@@ -13,6 +13,15 @@ import { crearGraficos } from './graficos.js';
 import { RegistroEventos } from './registro.js';
 import { RelojSimulado, VELOCIDADES, VELOCIDAD_INICIAL, MINUTOS_POR_SEGUNDO_BASE } from './reloj.js';
 import { Ejecucion, estadisticasDeEstado, csvEventos, csvResumen } from './simulacion.js';
+import { componerMensaje, estadoOperativo, lineasIndicadores } from './estado.js';
+import {
+  ESCENARIO_PERSONALIZADO,
+  aplicarEscenario,
+  buscarEscenario,
+  condicionEscenario,
+  detectarEscenario,
+  normalizarCatalogo,
+} from './escenarios.js';
 import {
   descargarTexto,
   formatearEntero,
@@ -39,6 +48,9 @@ const ETIQUETAS_REPLICAS = {
 
 const estado = {
   parametros: null,
+  escenarios: [],
+  escenarioInicial: ESCENARIO_PERSONALIZADO,
+  escenarioActual: ESCENARIO_PERSONALIZADO,
   ejecucion: null,
   reloj: null,
   velocidad: VELOCIDAD_INICIAL,
@@ -59,6 +71,8 @@ let escena = null;
 let graficos = null;
 let registro = null;
 let ultimoAria = 0;
+/** Referencias a las filas dinámicas del panel de indicadores científicos. */
+const filasIndicadores = new Map();
 
 // ---------------------------------------------------------------------
 // Referencias del DOM
@@ -70,6 +84,17 @@ function obtenerRefs() {
   const ids = [
     'estado-pill',
     'velocidad-chip',
+    'escenario-select',
+    'escenario-descripcion',
+    'escenario-condicion',
+    'estado-sistema',
+    'estado-sistema-titulo',
+    'estado-sistema-detalle',
+    'estado-rho',
+    'estado-lambda',
+    'estado-mu',
+    'estado-cola',
+    'indicadores-contenido',
     'form-parametros',
     'campos',
     'error-config',
@@ -96,6 +121,7 @@ function obtenerRefs() {
     'escena-hud-barra',
     'escena-hud-ocupacion',
     'escena-aviso',
+    'escena-alerta',
     'btn-camara-calle',
     'btn-camara-elevada',
     'stat-llegados',
@@ -127,9 +153,13 @@ function obtenerRefs() {
 async function crearEscena() {
   let escena3d = null;
   try {
-    escena3d = new EscenaParada3D(refs['escena'], { aviso: refs['escena-aviso'] });
+    escena3d = new EscenaParada3D(refs['escena'], {
+      aviso: refs['escena-aviso'],
+      alerta: refs['escena-alerta'],
+    });
     await escena3d.cargar();
     refs['escena-hud'].hidden = false;
+    publicarEscena(escena3d);
     return escena3d;
   } catch (error) {
     console.warn('No se pudo iniciar la escena 3D; se usará la escena 2D.', error);
@@ -139,12 +169,23 @@ async function crearEscena() {
     refs['escena-hud'].hidden = true;
     refs['escena-hud-bus'].hidden = true;
     refs['escena-aviso'].hidden = true;
+    if (refs['escena-alerta']) refs['escena-alerta'].hidden = true;
     const anterior = refs['escena'];
     const lienzo = anterior.cloneNode(false);
     anterior.replaceWith(lienzo);
     refs['escena'] = lienzo;
-    return new EscenaParada(lienzo);
+    const escena2d = new EscenaParada(lienzo);
+    publicarEscena(escena2d);
+    return escena2d;
   }
+}
+
+/**
+ * Publica la escena activa como evento del documento para que otros módulos
+ * (o herramientas de verificación) puedan consultar su diagnóstico.
+ */
+function publicarEscena(escena) {
+  document.dispatchEvent(new CustomEvent('simulacion:escena', { detail: { escena } }));
 }
 
 async function iniciar() {
@@ -174,12 +215,119 @@ async function cargarParametros() {
   try {
     const datos = await api.parametros();
     estado.parametros = datos.parametros;
+    estado.escenarios = normalizarCatalogo(datos.escenarios);
+    estado.escenarioInicial = datos.escenario_inicial || (estado.escenarios[0] && estado.escenarios[0].id) || ESCENARIO_PERSONALIZADO;
     construirFormulario(datos.parametros);
+    construirSelectorEscenarios();
+    aplicarEscenarioSeleccionado(estado.escenarioInicial);
     setTexto(refs['banner-error-reintentar'], 'Reintentar');
     ocultarBanner();
   } catch (error) {
     mostrarBanner(`No se pudieron cargar los parámetros del modelo: ${error.message}`, true);
   }
+}
+
+/** Construye el selector de escenarios a partir del catálogo del servidor. */
+function construirSelectorEscenarios() {
+  const select = refs['escenario-select'];
+  if (!select) return;
+  const fragmento = document.createDocumentFragment();
+  for (const escenario of estado.escenarios) {
+    const opcion = document.createElement('option');
+    opcion.value = escenario.id;
+    opcion.textContent = escenario.nombre;
+    fragmento.appendChild(opcion);
+  }
+  const personalizado = document.createElement('option');
+  personalizado.value = ESCENARIO_PERSONALIZADO;
+  personalizado.textContent = 'Personalizado (parámetros editados)';
+  fragmento.appendChild(personalizado);
+  select.replaceChildren(fragmento);
+}
+
+/** Escribe en el formulario los valores de un escenario. */
+function escribirValores(valores) {
+  for (const [clave, valor] of Object.entries(valores)) {
+    const input = document.getElementById(`param-${clave}`);
+    if (!input) continue;
+    input.value = valor === null || valor === undefined ? '' : String(valor);
+  }
+}
+
+/** Aplica un escenario al formulario y refleja su descripción. */
+function aplicarEscenarioSeleccionado(id) {
+  const escenario = buscarEscenario(estado.escenarios, id);
+  if (!escenario) {
+    estado.escenarioActual = ESCENARIO_PERSONALIZADO;
+    if (refs['escenario-select']) refs['escenario-select'].value = ESCENARIO_PERSONALIZADO;
+    setTexto(refs['escenario-descripcion'], 'Configuración personalizada: los parámetros se han editado a mano.');
+    setTexto(refs['escenario-condicion'], '');
+    return;
+  }
+  const valores = aplicarEscenario(estado.escenarios, id, leerValoresFormulario());
+  escribirValores(valores);
+  estado.escenarioActual = id;
+  if (refs['escenario-select']) refs['escenario-select'].value = id;
+  setTexto(refs['escenario-descripcion'], escenario.descripcion);
+  setTexto(refs['escenario-condicion'], condicionEscenario(estado.escenarios, id));
+  actualizarInfoModelo();
+}
+
+/** Valores actuales del formulario (sin validar). */
+function leerValoresFormulario() {
+  const valores = {};
+  if (!estado.parametros) return valores;
+  for (const clave of Object.keys(estado.parametros)) {
+    const input = document.getElementById(`param-${clave}`);
+    if (!input) continue;
+    const crudo = input.value.trim();
+    if (crudo === '') {
+      valores[clave] = clave === 'semilla' ? null : Number.NaN;
+      continue;
+    }
+    valores[clave] = Number(crudo);
+  }
+  return valores;
+}
+
+/** Detecta el escenario equivalente a la configuración actual. */
+function sincronizarEscenario() {
+  if (!estado.escenarios.length) return;
+  const detectado = detectarEscenario(estado.escenarios, leerValoresFormulario());
+  if (detectado === estado.escenarioActual) return;
+  estado.escenarioActual = detectado;
+  if (refs['escenario-select']) refs['escenario-select'].value = detectado;
+  if (detectado === ESCENARIO_PERSONALIZADO) {
+    setTexto(refs['escenario-descripcion'], 'Configuración personalizada: los parámetros se han editado a mano.');
+    setTexto(refs['escenario-condicion'], '');
+  } else {
+    const escenario = buscarEscenario(estado.escenarios, detectado);
+    setTexto(refs['escenario-descripcion'], escenario.descripcion);
+    setTexto(refs['escenario-condicion'], condicionEscenario(estado.escenarios, detectado));
+  }
+  actualizarInfoModelo();
+}
+
+/** Línea de resumen del modelo con los valores del formulario. */
+function actualizarInfoModelo() {
+  const teoricas = estado.ejecucion ? estado.ejecucion.metricasTeoricas : null;
+  const valores = leerValoresFormulario();
+  const lambda = Number.isFinite(valores.lambda_p) ? valores.lambda_p : null;
+  const h = Number.isFinite(valores.intervalo_promedio) ? valores.intervalo_promedio : null;
+  const capacidad = Number.isFinite(valores.capacidad_autobus) ? valores.capacidad_autobus : null;
+  const p = Number.isFinite(valores.prob_ocupacion) ? valores.prob_ocupacion : null;
+  const mu = teoricas && teoricas.mu_efectiva !== undefined
+    ? teoricas.mu_efectiva
+    : (lambda !== null && h !== null && capacidad !== null && p !== null
+        ? (capacidad * (1 - p)) / h
+        : null);
+  const rho = mu && mu > 0 && lambda !== null ? lambda / mu : (lambda ? Infinity : 0);
+  setTexto(
+    refs['info-modelo'],
+    `λ = ${formatearNumero(lambda, 1)} pas/min · h = ${formatearNumero(h, 1)} min · ` +
+      `C = ${formatearEntero(capacidad)} asientos · μ* = ${formatearNumero(mu)} pas/min · ρ* = ` +
+      `${rho === Infinity ? '∞' : formatearNumero(rho)}`,
+  );
 }
 
 function construirFormulario(parametros) {
@@ -349,6 +497,7 @@ function cargarEjecucion(payload) {
 
   renderAdvertencias(estado.ejecucion.advertencias);
   renderResultados(estado.ejecucion);
+  renderIndicadores(estado.ejecucion);
   limpiarReplicas();
   registro.limpiar();
   refrescarControles();
@@ -388,6 +537,8 @@ function actualizarVista(t, ahora, { snap = false, forzarGraficos = false } = {}
   const material = eje.estadoEn(t);
   const stats = estadisticasDeEstado(eje, material);
   const bus = eje.busVisualEn(t, { reducido: estado.reducido });
+  const operativo = estadoOperativo(stats.esperando, eje.limiteCola);
+  const mensaje = componerMensaje(eje.estado, operativo);
   const vista = {
     sinDatos: false,
     pausado: !estado.reloj.reproduciendo && !estado.reloj.finalizado,
@@ -399,10 +550,18 @@ function actualizarVista(t, ahora, { snap = false, forzarGraficos = false } = {}
     bus,
     reloj: formatearReloj(t),
     reducido: estado.reducido,
+    alerta: {
+      activa: operativo.saturado,
+      titulo: mensaje.titulo,
+      detalle: mensaje.detalle,
+      severidad: mensaje.severidad,
+    },
   };
   escena.dibujar(vista, ahora, { snap });
   actualizarHudEscena(vista);
   actualizarTarjetas(stats);
+  actualizarEstadoSistema(mensaje, operativo, eje);
+  actualizarIndicadoresVivos(operativo);
   if (!estado.arrastrandoLinea && eje.duracion > 0) {
     refs['linea-tiempo'].value = String(Math.round((t / eje.duracion) * 1000));
   }
@@ -416,6 +575,64 @@ function actualizarVista(t, ahora, { snap = false, forzarGraficos = false } = {}
     actualizarAria(stats, bus);
     ultimoAria = ahora;
   }
+}
+
+/** Zona de estado: clasificación matemática + estado operativo de la cola. */
+function actualizarEstadoSistema(mensaje, operativo, eje) {
+  const clasificacion = eje.estado || {};
+  const contenedor = refs['estado-sistema'];
+  if (contenedor) {
+    const severidad = mensaje.severidad || 'inactivo';
+    if (contenedor.dataset.severidad !== severidad) contenedor.dataset.severidad = severidad;
+  }
+  setTexto(refs['estado-sistema-titulo'], mensaje.titulo);
+  setTexto(refs['estado-sistema-detalle'], mensaje.detalle);
+  setTexto(refs['estado-rho'], clasificacion.rho === null || clasificacion.rho === undefined
+    ? '∞'
+    : formatearNumero(clasificacion.rho, 3));
+  setTexto(refs['estado-lambda'], formatearNumero(clasificacion.lambda_p, 2));
+  setTexto(refs['estado-mu'], formatearNumero(clasificacion.mu, 2));
+  setTexto(
+    refs['estado-cola'],
+    `${formatearEntero(operativo.colaReal)} / ${formatearEntero(operativo.limite)}`,
+  );
+}
+
+/** Construye el panel de indicadores científicos al cargar una ejecución. */
+function renderIndicadores(eje) {
+  const contenedor = refs['indicadores-contenido'];
+  if (!contenedor) return;
+  filasIndicadores.clear();
+  const lineas = lineasIndicadores(eje.estado, estadoOperativo(0, eje.limiteCola), eje.metricasTeoricas, eje.resultados);
+  const fragmento = document.createDocumentFragment();
+  for (const linea of lineas) {
+    const articulo = document.createElement('article');
+    articulo.className = 'indicador';
+    articulo.dataset.clave = linea.clave;
+    const titulo = document.createElement('h3');
+    titulo.className = 'indicador__titulo';
+    titulo.textContent = linea.etiqueta;
+    const valor = document.createElement('p');
+    valor.className = 'indicador__valor';
+    valor.textContent = linea.valor;
+    const ayuda = document.createElement('p');
+    ayuda.className = 'indicador__ayuda';
+    ayuda.textContent = linea.ayuda;
+    articulo.append(titulo, valor, ayuda);
+    fragmento.appendChild(articulo);
+    filasIndicadores.set(linea.clave, { articulo, valor });
+  }
+  contenedor.replaceChildren(fragmento);
+}
+
+/** Actualiza los indicadores que dependen del instante actual. */
+function actualizarIndicadoresVivos(operativo) {
+  const filaCola = filasIndicadores.get('cola_real');
+  if (filaCola) filaCola.valor.textContent = `${formatearEntero(operativo.colaReal)} pasajeros`;
+  const filaExcedente = filasIndicadores.get('excedente');
+  if (filaExcedente) filaExcedente.valor.textContent = `${formatearEntero(operativo.excedente)} pasajeros`;
+  const filaLimite = filasIndicadores.get('limite_cola');
+  if (filaLimite) filaLimite.valor.textContent = `${formatearEntero(operativo.limite)} pasajeros`;
 }
 
 function actualizarTarjetas(stats) {
@@ -435,6 +652,7 @@ function actualizarGraficos(t, eje, stats) {
     tiempo: t,
     duracion: eje.duracion,
     colaActual: stats.esperando,
+    limiteCola: eje.limiteCola,
   });
   graficos.acumulados.fijarDatos({
     acumulado: eje.serieAcumuladaHasta(t),
@@ -523,6 +741,26 @@ function conectarControles() {
   refs['form-parametros'].addEventListener('submit', (evento) => {
     evento.preventDefault();
     iniciarSimulacion();
+  });
+
+  if (refs['escenario-select']) {
+    refs['escenario-select'].addEventListener('change', (evento) => {
+      const id = evento.target.value;
+      if (id === ESCENARIO_PERSONALIZADO) {
+        estado.escenarioActual = ESCENARIO_PERSONALIZADO;
+        setTexto(refs['escenario-descripcion'], 'Configuración personalizada: los parámetros se han editado a mano.');
+        setTexto(refs['escenario-condicion'], '');
+        return;
+      }
+      aplicarEscenarioSeleccionado(id);
+    });
+  }
+
+  refs['campos'].addEventListener('input', () => {
+    sincronizarEscenario();
+  });
+  refs['campos'].addEventListener('change', () => {
+    sincronizarEscenario();
   });
 
   refs['btn-pausar'].addEventListener('click', () => {
@@ -684,6 +922,14 @@ function renderResultados(eje) {
     ['Espera máxima', `${formatearNumero(r.espera_maxima_abordados)} min`],
     ['Cola máxima', formatearEntero(r.cola_maxima)],
     ['Cola media temporal', `${formatearNumero(r.cola_media_temporal)} pasajeros`],
+    ['Límite operativo (Qmáx)', formatearEntero(r.limite_cola)],
+    [
+      'Saturación operativa',
+      r.tiempo_saturacion_operativa === null || r.tiempo_saturacion_operativa === undefined
+        ? 'No alcanzada'
+        : `Alcanzada en t = ${formatearNumero(r.tiempo_saturacion_operativa, 1)} min`,
+    ],
+    ['Tiempo en saturación', `${formatearNumero(r.minutos_en_saturacion, 1)} min`],
     ['Ocupación media de autobuses', ocupacionMedia === null ? '—' : formatearPorcentaje(ocupacionMedia)],
     [
       'Autobuses sin asientos al llegar',
@@ -712,12 +958,7 @@ function renderResultados(eje) {
   refs['resultado-semilla'].textContent =
     `Semilla usada: ${r.semilla === null ? 'no registrada' : r.semilla} (repita esta configuración con la misma semilla para reproducir la ejecución).`;
 
-  const indicadorCarga = teoricas.rho_estrella === null ? 'no definido' : formatearNumero(teoricas.rho_estrella);
-  setTexto(
-    refs['info-modelo'],
-    `λ = ${formatearNumero(config.lambda_p, 1)} pas/min · h = ${formatearNumero(config.intervalo_promedio, 1)} min · ` +
-      `C = ${formatearEntero(config.capacidad_autobus)} asientos · μ* = ${formatearNumero(teoricas.mu_efectiva)} pas/min · ρ* = ${indicadorCarga}`,
-  );
+  actualizarInfoModelo();
 }
 
 function renderAdvertencias(advertencias) {

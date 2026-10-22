@@ -10,12 +10,14 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import heapq
 import statistics
 
 import numpy as np
+
+from models.saturacion import clasificar_sistema
 
 
 @dataclass(slots=True)
@@ -32,6 +34,7 @@ class SimulationConfig:
     cola_inicial: int = 0
     primer_autobus_aleatorio: bool = True
     num_repeticiones: int = 30
+    limite_cola: int = 150
 
     def validar(self) -> None:
         """Valida los parámetros de configuración."""
@@ -51,6 +54,8 @@ class SimulationConfig:
             raise ValueError("La cola inicial no puede ser negativa.")
         if self.num_repeticiones <= 0:
             raise ValueError("El número de repeticiones debe ser positivo.")
+        if self.limite_cola <= 0:
+            raise ValueError("El límite operativo de la cola debe ser positivo.")
 
     @property
     def alpha_gamma(self) -> float:
@@ -66,8 +71,17 @@ class SimulationConfig:
 
     @property
     def asientos_libres_esperados(self) -> float:
-        """Asientos libres esperados por autobús."""
+        """Asientos libres esperados por autobús (capacidad efectiva Cₑ)."""
         return self.capacidad_autobus * (1.0 - self.prob_ocupacion)
+
+    @property
+    def capacidad_efectiva(self) -> float:
+        """Cₑ: capacidad efectiva media para recoger pasajeros en la parada.
+
+        Es el número de asientos que quedan libres al llegar, porque el resto
+        ya lo ocupan pasajeros que vienen de paradas anteriores.
+        """
+        return self.asientos_libres_esperados
 
     @property
     def mu_efectiva(self) -> float:
@@ -83,6 +97,14 @@ class SimulationConfig:
         if mu <= 0:
             return float("inf") if self.lambda_p > 0 else 0.0
         return self.lambda_p / mu
+
+    def clasificar(self) -> Dict[str, Any]:
+        """Clasificación matemática del sistema para esta configuración.
+
+        Delega en `models.saturacion`, que es la fuente de verdad del
+        clasificador (tolerancia crítica y umbral de alta utilización).
+        """
+        return clasificar_sistema(self.lambda_p, self.mu_efectiva)
 
     def clonar(self, **cambios) -> "SimulationConfig":
         """Devuelve una copia de la configuración con los cambios indicados."""
@@ -216,6 +238,9 @@ class SimulationResults:
     serie_tiempo_cola: List[Tuple[float, int]] = field(default_factory=list)
     historial_eventos: List[Dict] = field(default_factory=list)
     tiempo_final: float = 0.0
+    limite_cola: int = 150
+    tiempo_saturacion_operativa: Optional[float] = None
+    minutos_en_saturacion: float = 0.0
 
     @property
     def espera_media_abordados(self) -> float:
@@ -313,11 +338,17 @@ class SimulationEngine:
         dt = tiempo - self._ultimo_tiempo
         if dt > 0:
             self._area_cola += self._ultima_cola * dt
+            if self._ultima_cola >= self._limite_cola:
+                # Duración acumulada en estado de saturación operativa.
+                self._minutos_saturacion += dt
             self._ultimo_tiempo = tiempo
         self._ultima_cola = tamano
         self._res.serie_tiempo_cola.append((tiempo, tamano))
         if tamano > self._res.cola_maxima:
             self._res.cola_maxima = tamano
+        if tamano >= self._limite_cola and self._tiempo_saturacion is None:
+            # Instante simulado en el que la cola real alcanzó el umbral Qmáx.
+            self._tiempo_saturacion = tiempo
 
     def _procesar_llegada_pasajero(self, tiempo: float) -> None:
         pasajero = Passenger(id=self._id_pasajero, tiempo_llegada=tiempo)
@@ -388,6 +419,9 @@ class SimulationEngine:
         self._area_cola = 0.0
         self._ultimo_tiempo = 0.0
         self._ultima_cola = 0
+        self._limite_cola = cfg.limite_cola
+        self._minutos_saturacion = 0.0
+        self._tiempo_saturacion: Optional[float] = None
         self._res = SimulationResults(
             parametros={
                 "lambda_p": cfg.lambda_p,
@@ -397,9 +431,11 @@ class SimulationEngine:
                 "prob_ocupacion": cfg.prob_ocupacion,
                 "duracion": cfg.duracion,
                 "cola_inicial": cfg.cola_inicial,
+                "limite_cola": cfg.limite_cola,
             },
             semilla=self.semilla,
             cola_inicial=cfg.cola_inicial,
+            limite_cola=cfg.limite_cola,
         )
 
         for _ in range(cfg.cola_inicial):
@@ -428,6 +464,8 @@ class SimulationEngine:
         self._registrar(duracion, self._cola.tamano())
         res.tiempo_final = duracion
         res.pasajeros_restantes_cola = self._cola.tamano()
+        res.tiempo_saturacion_operativa = self._tiempo_saturacion
+        res.minutos_en_saturacion = self._minutos_saturacion
         for pasajero in self._cola.listar_pasajeros():
             res.tiempos_espera_restantes.append(max(0.0, duracion - pasajero.tiempo_llegada))
         res.cola_media_temporal = self._area_cola / duracion if duracion > 0 else 0.0

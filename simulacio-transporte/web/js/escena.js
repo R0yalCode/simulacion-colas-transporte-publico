@@ -8,6 +8,7 @@
  */
 
 import { clamp, mezclar, suavizar } from './util.js';
+import { MAXIMO_FIGURAS } from './disposicion3d.js';
 
 export const COLORES = {
   fondoEscena: '#0e1727',
@@ -103,7 +104,8 @@ export class EscenaParada {
     const paradaX = puertaX - anchoAutobus * 0.3;
     const inicioCola = puertaX + 26;
     const espacioCola = Math.max(60, ancho - inicioCola - 18);
-    const maxFiguras = clamp(Math.floor(espacioCola / 21), 5, 60);
+    const columnasPorFila = Math.max(6, Math.floor(espacioCola / 21));
+    const maxFiguras = MAXIMO_FIGURAS;
     return {
       bordeAcera,
       baseAcera,
@@ -115,6 +117,7 @@ export class EscenaParada {
       inicioCola,
       espacioCola,
       maxFiguras,
+      columnasPorFila,
       separacion: 21,
     };
   }
@@ -183,22 +186,42 @@ export class EscenaParada {
     ctx.fillText('PARADA', posteX + 4, alto * 0.24 - 7.5);
   }
 
+  /**
+   * Estado visual de la escena 2D: figuras dibujadas y límite aplicado.
+   * Mantiene la misma forma que el diagnóstico de la escena 3D.
+   */
+  diagnostico() {
+    return {
+      es3d: false,
+      detailed: this._posiciones.size,
+      instanced: 0,
+      visible: this._posiciones.size,
+      max: MAXIMO_FIGURAS,
+      zones: {},
+      alert: false,
+    };
+  }
+
   _procesarCola(vista, L, dt, snap) {
     const { ctx } = this;
     const cola = vista.cola || [];
     const visibles = Math.min(cola.length, L.maxFiguras);
     const idsPresentes = new Set();
     const escala = clamp(this.canvas.clientHeight / 300, 0.85, 1.4);
+    const filas = Math.max(1, Math.ceil(visibles / L.columnasPorFila));
 
     for (let i = 0; i < visibles; i += 1) {
       const id = cola[i];
       idsPresentes.add(id);
-      const objetivo = L.inicioCola + i * L.separacion;
+      const fila = Math.floor(i / L.columnasPorFila);
+      const columna = i % L.columnasPorFila;
+      const objetivo = L.inicioCola + columna * L.separacion;
       let posicion = this._posiciones.get(id);
       if (posicion === undefined) {
-        posicion = { x: snap ? objetivo : Math.max(objetivo, this.canvas.clientWidth + 14), fase: Math.random() * Math.PI * 2 };
+        posicion = { x: snap ? objetivo : Math.max(objetivo, this.canvas.clientWidth + 14), fase: Math.random() * Math.PI * 2, fila };
       }
       posicion.x = snap ? objetivo : suavizar(posicion.x, objetivo, dt, 7);
+      posicion.fila = fila;
       posicion.fase += dt * 4;
       this._posiciones.set(id, posicion);
     }
@@ -209,12 +232,16 @@ export class EscenaParada {
     for (const id of idsPresentes) {
       const posicion = this._posiciones.get(id);
       const caminando = !snap && posicion.x > L.inicioCola + 1.5;
-      this._dibujarFigura(posicion.x, L.baseAcera - 12, escala, COLORES.espera, caminando ? posicion.fase : 0);
+      const fila = posicion.fila || 0;
+      const y = L.baseAcera - 12 - (filas - 1 - fila) * 15;
+      this._dibujarFigura(posicion.x, y, escala, COLORES.espera, caminando ? posicion.fase : 0);
     }
 
     if (cola.length > visibles) {
-      const x = L.inicioCola + visibles * L.separacion + 4;
-      this._texto(`+${cola.length - visibles}`, x, L.baseAcera - 26, {
+      const x = L.inicioCola + (visibles % L.columnasPorFila) * L.separacion + 4;
+      const fila = Math.floor(visibles / L.columnasPorFila);
+      const y = L.baseAcera - 12 - (filas - fila) * 15;
+      this._texto(`+${cola.length - visibles}`, x, y - 14, {
         color: COLORES.rojo,
         font: `700 ${12 * escala}px ${FUENTE}`,
       });

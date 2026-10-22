@@ -14,6 +14,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { clone as clonarEsqueleto } from 'three/addons/utils/SkeletonUtils.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 import { clamp, mezclar, setTexto, suavizar } from './util.js';
 import {
@@ -22,7 +23,9 @@ import {
   CARRIL_Z,
   COLA_Z,
   MAXIMO_FIGURAS,
+  ZONAS_COLA,
   busVisible,
+  limitesZona,
   posicionBus,
   posicionCola,
   posicionPuerta,
@@ -31,8 +34,17 @@ import {
 } from './disposicion3d.js';
 
 const ALTURA_ACERA = 0.16;
-const MAX_ACTORES = 60;
-const MAX_CAMINANTES = 20;
+/**
+ * Actors con el modelo GLB completo (con animación). Son los primeros de la
+ * cola, los más próximos a la puerta: ahí el detalle se aprecia.
+ */
+const MAX_ACTORES = 24;
+/** Pasajeros que caminan hacia la puerta simultáneamente. */
+const MAX_CAMINANTES = 12;
+/** Multiplicador de escala al aparecer un pasajero (evita saltos). */
+const VELOCIDAD_APARICION = 3.2;
+/** Segundos mínimos entre actualizaciones de las etiquetas de zona. */
+const INTERVALO_ETIQUETAS = 0.25;
 const RADIO_RUEDA = 0.53;
 
 const PALETAS = {
@@ -225,13 +237,108 @@ function elegir(lista, valor) {
   return lista[Math.min(lista.length - 1, Math.floor(valor * lista.length))];
 }
 
+// ---------------------------------------------------------------------------
+// Geometría de la multitud (LOD)
+// ---------------------------------------------------------------------------
+
+/** Color base de un material del modelo de pasajero. */
+function colorDeMaterial(material) {
+  if (!material) return new THREE.Color(0x8f9bab);
+  if (Array.isArray(material)) return colorDeMaterial(material[0]);
+  if (material.color) return material.color.clone();
+  return new THREE.Color(0x8f9bab);
+}
+
+/**
+ * Fusiona el modelo de pasajero en una única geometría con colores por
+ * vértice, apta para dibujarse con `InstancedMesh`.
+ *
+ * La fusión conserva la silueta del personaje original, pero elimina la
+ * animación por nodos: a esa distancia la multitud se representa con
+ * figuras instanciadas (una sola llamada de dibujo) mientras que la cabeza de
+ * la cola usa actores completos y animados.
+ */
+function geometriaMultitud(plantilla) {
+  plantilla.updateMatrixWorld(true);
+  const inversa = new THREE.Matrix4().copy(plantilla.matrixWorld).invert();
+  const geometrias = [];
+  plantilla.traverse((objeto) => {
+    if (!objeto.isMesh || !objeto.geometry || !objeto.geometry.attributes.position) return;
+    const geometria = objeto.geometry.clone();
+    const simple = geometria.index ? geometria.toNonIndexed() : geometria;
+    if (simple !== geometria) geometria.dispose();
+    const matriz = new THREE.Matrix4().multiplyMatrices(inversa, objeto.matrixWorld);
+    simple.applyMatrix4(matriz);
+    if (!simple.attributes.normal) simple.computeVertexNormals();
+    const cantidad = simple.attributes.position.count;
+    if (!simple.attributes.uv) {
+      simple.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(cantidad * 2), 2));
+    }
+    const color = colorDeMaterial(objeto.material);
+    const colores = new Float32Array(cantidad * 3);
+    for (let i = 0; i < cantidad; i += 1) {
+      colores[i * 3] = color.r;
+      colores[i * 3 + 1] = color.g;
+      colores[i * 3 + 2] = color.b;
+    }
+    simple.setAttribute('color', new THREE.BufferAttribute(colores, 3));
+    for (const nombre of Object.keys(simple.attributes)) {
+      if (nombre !== 'position' && nombre !== 'normal' && nombre !== 'uv' && nombre !== 'color') {
+        simple.deleteAttribute(nombre);
+      }
+    }
+    simple.clearGroups();
+    geometrias.push(simple);
+  });
+
+  if (geometrias.length === 0) return null;
+  const fusionada = mergeGeometries(geometrias, false);
+  for (const geometria of geometrias) geometria.dispose();
+  if (!fusionada) return null;
+  fusionada.computeBoundingSphere();
+  return fusionada;
+}
+
+/** Figura sencilla de respaldo si la fusión del modelo no es posible. */
+function geometriaFiguraSimple() {
+  const torso = new THREE.CylinderGeometry(0.19, 0.24, 0.95, 8, 1);
+  torso.translate(0, 0.48, 0);
+  const cabeza = new THREE.SphereGeometry(0.16, 10, 8);
+  cabeza.translate(0, 1.12, 0);
+  const fusionada = mergeGeometries([torso, cabeza], false);
+  torso.dispose();
+  cabeza.dispose();
+  if (!fusionada) return null;
+  const cantidad = fusionada.attributes.position.count;
+  const colores = new Float32Array(cantidad * 3);
+  for (let i = 0; i < cantidad; i += 1) {
+    const torsoOscuro = fusionada.attributes.position.getY(i) < 0.9;
+    colores[i * 3] = torsoOscuro ? 0.24 : 0.72;
+    colores[i * 3 + 1] = torsoOscuro ? 0.3 : 0.58;
+    colores[i * 3 + 2] = torsoOscuro ? 0.42 : 0.5;
+  }
+  fusionada.setAttribute('color', new THREE.BufferAttribute(colores, 3));
+  fusionada.computeBoundingSphere();
+  return fusionada;
+}
+
+/** Tinte estable por pasajero (multiplica el color por vértice horneado). */
+function tinteDePasajero(id) {
+  const h = semillaDe(String(id));
+  const t = 0.78 + (h % 1000) / 1000 * 0.34;
+  return new THREE.Color(t, t, t);
+}
+
 export class EscenaParada3D {
-  constructor(canvas, { aviso = null } = {}) {
+  constructor(canvas, { aviso = null, alerta = null } = {}) {
     this.canvas = canvas;
     this.es3d = true;
     this.aviso = aviso;
     this.avisoTitulo = aviso ? aviso.querySelector('.escena__aviso-titulo') : null;
     this.avisoDetalle = aviso ? aviso.querySelector('.escena__aviso-detalle') : null;
+    this.alerta = alerta;
+    this.alertaTitulo = alerta ? alerta.querySelector('.escena__alerta-titulo') : null;
+    this.alertaDetalle = alerta ? alerta.querySelector('.escena__alerta-detalle') : null;
 
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -262,6 +369,9 @@ export class EscenaParada3D {
     this._libres = [];
     this._cola = new Map();
     this._caminantes = new Map();
+    this._multitud = null;
+    this._marcasZona = [];
+    this._ultimoTextoZonas = 0;
 
     this._cargado = false;
     this._errorCarga = null;
@@ -278,6 +388,7 @@ export class EscenaParada3D {
 
     this._construirEntorno();
     this._crearEtiquetaCola();
+    this._crearMarcasZona();
   }
 
   // ------------------------------------------------------------------
@@ -660,10 +771,104 @@ export class EscenaParada3D {
 
       this._cargado = true;
       this._errorCarga = null;
+      this._prepararMultitud();
     } catch (error) {
       this._errorCarga = error;
       throw error;
     }
+  }
+
+  /**
+   * Prepara la multitud instanciada: una única llamada de dibujo para todos
+   * los pasajeros que no caben en el grupo de actores detallados.
+   */
+  _prepararMultitud() {
+    const geometria = geometriaMultitud(this.pasajeroPlantilla) || geometriaFiguraSimple();
+    if (!geometria) return;
+    const material = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.86,
+      metalness: 0.02,
+    });
+    const multitud = new THREE.InstancedMesh(geometria, material, MAXIMO_FIGURAS);
+    multitud.name = 'cola_multitud';
+    multitud.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    multitud.castShadow = false;
+    multitud.receiveShadow = true;
+    multitud.frustumCulled = false;
+    multitud.count = 0;
+    this.escena.add(multitud);
+    this._multitud = multitud;
+  }
+
+  /**
+   * Marcas de zona: banda de suelo y etiqueta con la ocupación de cada
+   * zona de la cola (refugio, extensión, desbordamiento y espera adicional).
+   */
+  _crearMarcasZona() {
+    for (const zona of ZONAS_COLA) {
+      const limites = limitesZona(zona.id);
+      if (!limites) continue;
+      const material = new THREE.MeshBasicMaterial({
+        color: 0x43d1d0,
+        transparent: true,
+        opacity: 0.05,
+        depthWrite: false,
+      });
+      const banda = new THREE.Mesh(
+        new THREE.PlaneGeometry(limites.xMax - limites.xMin, limites.zMax - limites.zMin),
+        material,
+      );
+      banda.rotation.x = -Math.PI / 2;
+      banda.position.set(limites.centroX, ALTURA_ACERA + 0.006, limites.centroZ);
+      banda.renderOrder = 1;
+      this.escena.add(banda);
+
+      const lienzo = document.createElement('canvas');
+      lienzo.width = 256;
+      lienzo.height = 64;
+      const textura = new THREE.CanvasTexture(lienzo);
+      textura.colorSpace = THREE.SRGBColorSpace;
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: textura, transparent: true, depthWrite: false }),
+      );
+      sprite.scale.set(2.2, 0.55, 1);
+      sprite.position.set(limites.centroX, ALTURA_ACERA + 1.9, limites.centroZ);
+      sprite.visible = false;
+      this.escena.add(sprite);
+
+      this._marcasZona.push({
+        zona,
+        banda,
+        material,
+        lienzo,
+        textura,
+        sprite,
+        capacidad: zona.filas.length * zona.columnas,
+        ocupacion: 0,
+        texto: '',
+      });
+    }
+  }
+
+  /** Pinta el texto de ocupación de una zona (solo si cambió). */
+  _pintarZona(marca) {
+    const texto = `${marca.zona.id} · ${marca.zona.etiqueta} · ${marca.ocupacion}/${marca.capacidad}`;
+    if (texto === marca.texto) return;
+    marca.texto = texto;
+    const ctx = marca.lienzo.getContext('2d');
+    ctx.clearRect(0, 0, marca.lienzo.width, marca.lienzo.height);
+    ctx.fillStyle = 'rgba(10, 16, 27, 0.82)';
+    ctx.fillRect(0, 0, marca.lienzo.width, marca.lienzo.height);
+    ctx.strokeStyle = 'rgba(67, 209, 208, 0.85)';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(3, 3, marca.lienzo.width - 6, marca.lienzo.height - 6);
+    ctx.fillStyle = '#9fe8e6';
+    ctx.font = '600 26px Inter, Segoe UI, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(texto, marca.lienzo.width / 2, marca.lienzo.height / 2);
+    marca.textura.needsUpdate = true;
   }
 
   destruir() {
@@ -703,7 +908,16 @@ export class EscenaParada3D {
     caminar.setEffectiveWeight(0);
 
     this.escena.add(root);
-    const actor = { root, mixer, reposo, caminar, pesoCaminar: 0, clave: null };
+    const actor = {
+      root,
+      mixer,
+      reposo,
+      caminar,
+      pesoCaminar: 0,
+      clave: null,
+      escalaBase: { x: 1, y: 1, z: 1 },
+      aparecer: 1,
+    };
     this._actores.push(actor);
     return actor;
   }
@@ -746,7 +960,8 @@ export class EscenaParada3D {
     const sinGorra = rnd(8) < 0.38;
     const conMochila = rnd(9) < 0.5;
     const escala = 0.93 + rnd(10) * 0.13;
-    actor.root.scale.set(escala * (0.98 + rnd(11) * 0.04), escala, escala * (0.98 + rnd(12) * 0.04));
+    actor.escalaBase = { x: escala * (0.98 + rnd(11) * 0.04), y: escala, z: escala * (0.98 + rnd(12) * 0.04) };
+    actor.root.scale.set(actor.escalaBase.x, actor.escalaBase.y, actor.escalaBase.z);
 
     actor.root.traverse((objeto) => {
       if (objeto.name === 'gorra') objeto.visible = !sinGorra;
@@ -792,43 +1007,38 @@ export class EscenaParada3D {
     const cola = vista && !vista.sinDatos ? vista.cola || [] : [];
     const visibles = Math.min(cola.length, MAXIMO_FIGURAS);
     const vigentes = new Set();
+    const multitud = [];
 
     for (let i = 0; i < visibles; i += 1) {
       const id = cola[i];
       vigentes.add(id);
       let actor = this._cola.get(id);
-      const destino = posicionCola(i, cola.length);
-      if (!actor) {
+      if (actor) {
+        this._colocarActor(actor, i, dt, snap, reducido);
+        continue;
+      }
+      // La cabeza de la cola usa actores detallados y animados.
+      if (i < MAX_ACTORES) {
         actor = this._obtenerActor();
-        if (!actor) break;
-        this._cola.set(id, actor);
-        this._asignarActor(actor, id);
-        const desde = snap || reducido
-          ? destino
-          : { x: destino.x + 5.5, y: 0, z: destino.z + 0.4 };
-        actor.root.position.set(desde.x, ALTURA_ACERA, desde.z);
-        actor.root.rotation.y = -Math.PI / 2;
-        actor.pesoCaminar = snap || reducido ? 0 : 1;
-        actor.reposo.setEffectiveWeight(actor.pesoCaminar === 1 ? 0 : 1);
-        actor.caminar.setEffectiveWeight(actor.pesoCaminar);
+        if (actor) {
+          this._cola.set(id, actor);
+          this._asignarActor(actor, id);
+          actor.aparecer = 0;
+          const destino = posicionCola(i);
+          const desde = snap || reducido
+            ? destino
+            : { x: destino.x + 5.5, y: 0, z: destino.z + 0.4 };
+          actor.root.position.set(desde.x, ALTURA_ACERA, desde.z);
+          actor.root.rotation.y = -Math.PI / 2;
+          actor.pesoCaminar = snap || reducido ? 0 : 1;
+          actor.reposo.setEffectiveWeight(actor.pesoCaminar === 1 ? 0 : 1);
+          actor.caminar.setEffectiveWeight(actor.pesoCaminar);
+          this._colocarActor(actor, i, dt, snap, reducido);
+          continue;
+        }
       }
-
-      const posicion = actor.root.position;
-      if (snap || reducido) {
-        posicion.x = destino.x;
-        posicion.z = destino.z;
-      } else {
-        posicion.x = suavizar(posicion.x, destino.x, dt, 6);
-        posicion.z = suavizar(posicion.z, destino.z, dt, 6);
-      }
-      posicion.y = ALTURA_ACERA;
-
-      const caminando = !reducido && Math.abs(destino.x - posicion.x) > 0.06;
-      this._animarActor(actor, caminando ? 'caminar' : 'reposo', dt, snap || reducido);
-      const giro = -Math.PI / 2 + (((id * 53) % 5) - 2) * 0.05;
-      actor.root.rotation.y = snap || reducido ? giro : suavizar(actor.root.rotation.y, giro, dt, 5);
-      actor.root.visible = true;
-      actor.mixer.update(snap ? 0 : dt);
+      // El resto se representa con la multitud instanciada.
+      multitud.push({ id, indice: i });
     }
 
     for (const [id, actor] of this._cola) {
@@ -838,8 +1048,82 @@ export class EscenaParada3D {
       }
     }
 
+    this._actualizarMultitud(multitud, snap);
+    this._actualizarZonas(cola, visibles);
     this._actualizarEtiquetaCola(cola.length, visibles);
   }
+
+  /** Coloca y anima un actor detallado en su puesto de la cola. */
+  _colocarActor(actor, indice, dt, snap, reducido) {
+    const destino = posicionCola(indice);
+    const posicion = actor.root.position;
+    if (snap || reducido) {
+      posicion.x = destino.x;
+      posicion.z = destino.z;
+    } else {
+      posicion.x = suavizar(posicion.x, destino.x, dt, 6);
+      posicion.z = suavizar(posicion.z, destino.z, dt, 6);
+    }
+    posicion.y = ALTURA_ACERA;
+
+    actor.aparecer = snap || reducido
+      ? 1
+      : Math.min(1, (actor.aparecer ?? 0) + dt * VELOCIDAD_APARICION);
+    const escala = actor.escalaBase || { x: 1, y: 1, z: 1 };
+    actor.root.scale.set(escala.x * actor.aparecer, escala.y * actor.aparecer, escala.z * actor.aparecer);
+
+    const caminando = !reducido && Math.abs(destino.x - posicion.x) > 0.06;
+    this._animarActor(actor, caminando ? 'caminar' : 'reposo', dt, snap || reducido);
+    const giro = -Math.PI / 2 + (((actor.clave * 53) % 5) - 2) * 0.05;
+    actor.root.rotation.y = snap || reducido ? giro : suavizar(actor.root.rotation.y, giro, dt, 5);
+    actor.root.visible = true;
+    actor.mixer.update(snap ? 0 : dt);
+  }
+
+  /** Dibuja la multitud instanciada (una sola llamada de dibujo). */
+  _actualizarMultitud(multitud, snap) {
+    if (!this._multitud) return;
+    const matriz = new THREE.Matrix4();
+    const posicion = new THREE.Vector3();
+    const rotacion = new THREE.Quaternion();
+    const escala = new THREE.Vector3(1, 1, 1);
+    const ejeY = new THREE.Vector3(0, 1, 0);
+    const angulo = -Math.PI / 2;
+    for (let i = 0; i < multitud.length; i += 1) {
+      const pasajero = multitud[i];
+      const puesto = posicionCola(pasajero.indice);
+      posicion.set(puesto.x, ALTURA_ACERA, puesto.z);
+      rotacion.setFromAxisAngle(ejeY, angulo + (((pasajero.id * 53) % 5) - 2) * 0.05);
+      matriz.compose(posicion, rotacion, escala);
+      this._multitud.setMatrixAt(i, matriz);
+      this._multitud.setColorAt(i, tinteDePasajero(pasajero.id));
+    }
+    this._multitud.count = multitud.length;
+    this._multitud.instanceMatrix.needsUpdate = true;
+    if (this._multitud.instanceColor) this._multitud.instanceColor.needsUpdate = true;
+  }
+
+  /** Actualiza las marcas de zona (ocupación y opacidad de la banda). */
+  _actualizarZonas(cola, visibles) {
+    const ocupaciones = {};
+    for (let i = 0; i < visibles; i += 1) {
+      const zona = posicionCola(i).zona;
+      ocupaciones[zona] = (ocupaciones[zona] || 0) + 1;
+    }
+    const ahora = performance.now();
+    const refrescarEtiquetas = ahora - this._ultimoTextoZonas > INTERVALO_ETIQUETAS * 1000;
+    if (refrescarEtiquetas) this._ultimoTextoZonas = ahora;
+    for (const marca of this._marcasZona) {
+      const ocupacion = ocupaciones[marca.zona.id] || 0;
+      marca.ocupacion = ocupacion;
+      const proporcion = ocupacion / marca.capacidad;
+      marca.material.opacity = 0.04 + proporcion * 0.12;
+      marca.material.color.setHex(proporcion >= 1 ? 0xff8c97 : 0x43d1d0);
+      marca.sprite.visible = ocupacion > 0;
+      if (ocupacion > 0 && refrescarEtiquetas) this._pintarZona(marca);
+    }
+  }
+
 
   _actualizarEtiquetaCola(total, visibles) {
     if (!this.etiquetaCola) return;
@@ -848,7 +1132,7 @@ export class EscenaParada3D {
       this.etiquetaCola.visible = false;
       return;
     }
-    const ultimo = posicionCola(Math.max(0, visibles - 1), Math.max(visibles, 1));
+    const ultimo = posicionCola(Math.max(0, visibles - 1));
     this.etiquetaCola.position.set(ultimo.x + 1.1, ALTURA_ACERA + 2.5, COLA_Z);
     this.etiquetaCola.visible = true;
     const texto = `+${sobrantes}`;
@@ -874,7 +1158,6 @@ export class EscenaParada3D {
     const bus = vista && !vista.sinDatos ? vista.bus : null;
     const activos = bus && bus.fase === 'abordando' ? Math.min(bus.mostrados, MAX_CAMINANTES) : 0;
     const vigentes = new Set();
-    const totalCola = bus ? Math.max(bus.colaAntes, bus.abordados, 1) : 1;
     const destino = posicionPuerta();
     const busX = bus ? posicionBus(bus.fase, bus.progreso) : 0;
 
@@ -886,7 +1169,7 @@ export class EscenaParada3D {
         if (!actor) break;
         this._caminantes.set(i, actor);
         this._asignarActor(actor, `cam-${i}`);
-        const origen = posicionCola(i, totalCola);
+        const origen = posicionCola(i);
         actor.root.position.set(origen.x, ALTURA_ACERA, origen.z);
         actor.root.rotation.y = -Math.PI / 2;
         actor.pesoCaminar = 1;
@@ -894,7 +1177,7 @@ export class EscenaParada3D {
         actor.caminar.setEffectiveWeight(1);
       }
       const local = reducido ? 1 : progresoCaminante(i, bus.abordados, bus.progreso);
-      const origen = posicionCola(i, totalCola);
+      const origen = posicionCola(i);
       actor.root.position.set(
         mezclar(origen.x, destino.x + busX, local),
         ALTURA_ACERA,
@@ -971,6 +1254,23 @@ export class EscenaParada3D {
   // Aviso superpuesto
   // ------------------------------------------------------------------
 
+  /** Alerta de saturación superpuesta a la escena. */
+  _actualizarAlerta(vista) {
+    if (!this.alerta) return;
+    const alerta = vista && vista.alerta ? vista.alerta : null;
+    const activa = !!(alerta && alerta.activa);
+    if (!activa) {
+      if (!this.alerta.hidden) this.alerta.hidden = true;
+      return;
+    }
+    this.alerta.hidden = false;
+    if (this.alerta.dataset.estado !== (alerta.severidad || 'alerta')) {
+      this.alerta.dataset.estado = alerta.severidad || 'alerta';
+    }
+    setTexto(this.alertaTitulo, alerta.titulo || '');
+    setTexto(this.alertaDetalle, alerta.detalle || '');
+  }
+
   _actualizarAviso(vista) {
     if (!this.aviso) return;
     let estado = 'oculto';
@@ -1006,6 +1306,31 @@ export class EscenaParada3D {
   }
 
   // ------------------------------------------------------------------
+  // Diagnóstico
+  // ------------------------------------------------------------------
+
+  /**
+   * Estado visual de la escena: figuras dibujadas, reparto por zonas y
+   * activación de la alerta. Permite verificar en caliente que la cola se
+   * representa completa hasta el límite visual (150 figuras).
+   */
+  diagnostico() {
+    const ocupaciones = {};
+    for (const marca of this._marcasZona) {
+      ocupaciones[marca.zona.id] = marca.ocupacion || 0;
+    }
+    return {
+      es3d: true,
+      detailed: this._cola.size,
+      instanced: this._multitud ? this._multitud.count : 0,
+      visible: this._cola.size + (this._multitud ? this._multitud.count : 0),
+      max: MAXIMO_FIGURAS,
+      zones: ocupaciones,
+      alert: this.alerta ? !this.alerta.hidden : false,
+    };
+  }
+
+  // ------------------------------------------------------------------
   // Fotograma
   // ------------------------------------------------------------------
 
@@ -1018,6 +1343,7 @@ export class EscenaParada3D {
     this._ultimoTiempoReal = ahoraReal;
 
     this._actualizarAviso(vista);
+    this._actualizarAlerta(vista);
     if (this._cargado) {
       const inmovil = !vista || vista.pausado || vista.finalizado;
       const dtAnimacion = inmovil ? 0 : dt;

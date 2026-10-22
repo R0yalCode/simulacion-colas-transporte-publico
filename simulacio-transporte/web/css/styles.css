@@ -1093,3 +1093,192 @@ input[type='range']:disabled {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* =====================================================================
+   Estado del sistema, escenarios e indicadores científicos
+   ===================================================================== */
+
+.campo__select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radio-campo);
+  border: 1px solid var(--borde);
+  background: var(--campo);
+  color: var(--texto);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.campo__select:focus-visible {
+  outline: 2px solid var(--cian);
+  outline-offset: 1px;
+}
+
+.escenario__condicion {
+  margin-top: 6px;
+  padding: 5px 9px;
+  border-radius: var(--radio-campo);
+  background: rgba(67, 209, 208, 0.1);
+  border: 1px solid rgba(67, 209, 208, 0.28);
+  color: #9fe8e6;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.escenario__condicion:empty {
+  display: none;
+}
+
+.info-modelo--nota {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--texto-3);
+  line-height: 1.5;
+}
+
+.estado-sistema {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+  padding: 16px 18px;
+  border-radius: var(--radio-panel);
+  background: linear-gradient(135deg, rgba(18, 28, 42, 0.96), rgba(11, 19, 31, 0.96));
+  border: 1px solid var(--borde);
+  box-shadow: var(--sombra);
+}
+
+.estado-sistema__marca {
+  width: 5px;
+  border-radius: 999px;
+  background: var(--texto-3);
+  flex: 0 0 auto;
+}
+
+.estado-sistema__cuerpo {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.estado-sistema__titulo {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: var(--texto);
+}
+
+.estado-sistema__detalle {
+  font-size: 12.5px;
+  color: var(--texto-2);
+  line-height: 1.5;
+}
+
+.estado-sistema__cifras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin-top: 2px;
+}
+
+.estado-sistema__cifras > div {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.estado-sistema__cifras dt {
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--texto-3);
+}
+
+.estado-sistema__cifras dd {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--texto);
+}
+
+.estado-sistema[data-severidad='ok'] .estado-sistema__marca { background: var(--verde); }
+.estado-sistema[data-severidad='ok'] .estado-sistema__titulo { color: var(--verde); }
+.estado-sistema[data-severidad='aviso'] .estado-sistema__marca { background: var(--amarillo); }
+.estado-sistema[data-severidad='aviso'] .estado-sistema__titulo { color: var(--amarillo); }
+.estado-sistema[data-severidad='alerta'] {
+  border-color: rgba(255, 140, 151, 0.55);
+  background: linear-gradient(135deg, rgba(46, 22, 30, 0.96), rgba(19, 14, 22, 0.96));
+}
+.estado-sistema[data-severidad='alerta'] .estado-sistema__marca { background: var(--rojo); }
+.estado-sistema[data-severidad='alerta'] .estado-sistema__titulo { color: var(--rojo); }
+
+.indicadores {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.indicador {
+  padding: 11px 13px;
+  border-radius: var(--radio-campo);
+  background: var(--superficie);
+  border: 1px solid var(--borde-suave);
+}
+
+.indicador__titulo {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--texto-3);
+}
+
+.indicador__valor {
+  margin-top: 4px;
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--texto);
+}
+
+.indicador__ayuda {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--texto-3);
+}
+
+.escena__alerta {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 12px;
+  z-index: 4;
+  display: grid;
+  gap: 3px;
+  padding: 9px 13px;
+  border-radius: 10px;
+  background: rgba(58, 20, 28, 0.9);
+  border: 1px solid rgba(255, 140, 151, 0.6);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.escena__alerta[hidden] {
+  display: none;
+}
+
+.escena__alerta-titulo {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: var(--rojo);
+}
+
+.escena__alerta-detalle {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #ffd8dc;
+}

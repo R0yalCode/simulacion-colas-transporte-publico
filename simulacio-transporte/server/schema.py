@@ -16,6 +16,15 @@ from models.simulation import (
     ejecutar_repeticiones,
     resumen_metricas,
 )
+from models.saturacion import (
+    ESCENARIO_INICIAL,
+    LIMITE_VISUAL_MAX,
+    TOLERANCIA_CRITICO,
+    UMBRAL_ALTA_UTILIZACION,
+    clasificar_operacion,
+    clasificar_sistema,
+    escenarios_publicables,
+)
 
 SEMILLA_BASE_REPLICAS = 12345
 MAX_REPETICIONES = 100
@@ -115,7 +124,20 @@ PARAMETROS: Dict[str, Dict[str, Any]] = {
         "max": MAX_REPETICIONES,
         "defecto": 30,
         "paso": 1,
-        "ayuda": "N\u00famero de r\u00e9plicas independientes al promediar resultados.",
+        "ayuda": "Número de réplicas independientes al promediar resultados.",
+    },
+    "limite_cola": {
+        "etiqueta": "Límite operativo de la cola (Qmáx)",
+        "unidad": "pasajeros",
+        "tipo": "entero",
+        "min": 100,
+        "max": LIMITE_VISUAL_MAX,
+        "defecto": LIMITE_VISUAL_MAX,
+        "paso": 10,
+        "ayuda": (
+            "Umbral de saturación operativa y visual. Al alcanzarlo se activa la "
+            "alerta de saturación; la cola real del modelo nunca se recorta."
+        ),
     },
 }
 
@@ -143,10 +165,11 @@ def _a_entero(valor: Any, nombre: str) -> int:
     return int(round(numero))
 
 
-def _validar_rango(valor: float, meta: Dict[str, Any]) -> None:
+def _validar_rango(valor: float, meta: Dict[str, Any], nombre: Optional[str] = None) -> None:
     if valor < meta["min"] or valor > meta["max"]:
+        prefijo = f"{nombre}: " if nombre else ""
         raise ParametroInvalido(
-            f"{meta['etiqueta']}: debe estar entre {meta['min']} y {meta['max']} {meta['unidad']}."
+            f"{prefijo}{meta['etiqueta']}: debe estar entre {meta['min']} y {meta['max']} {meta['unidad']}."
         )
 
 
@@ -168,15 +191,15 @@ def config_desde_payload(datos: Any) -> SimulationConfig:
                 valores[nombre] = None
                 continue
             entero = _a_entero(valor, nombre)
-            _validar_rango(float(entero), meta)
+            _validar_rango(float(entero), meta, nombre)
             valores[nombre] = entero
         elif meta["tipo"] == "entero":
             entero = _a_entero(valor, nombre)
-            _validar_rango(float(entero), meta)
+            _validar_rango(float(entero), meta, nombre)
             valores[nombre] = entero
         else:
             numero = _a_numero(valor, nombre)
-            _validar_rango(numero, meta)
+            _validar_rango(numero, meta, nombre)
             valores[nombre] = numero
     config = SimulationConfig(**valores)
     config.validar()
@@ -189,6 +212,21 @@ def payload_parametros() -> Dict[str, Any]:
         "parametros": PARAMETROS,
         "semilla_base_replicas": SEMILLA_BASE_REPLICAS,
         "max_eventos_advertencia": MAX_EVENTOS_ADVERTENCIA,
+        "escenarios": escenarios_publicables(),
+        "escenario_inicial": ESCENARIO_INICIAL,
+        "clasificador": {
+            "umbral_alta_utilizacion": UMBRAL_ALTA_UTILIZACION,
+            "tolerancia_critico": TOLERANCIA_CRITICO,
+            "limite_visual_max": LIMITE_VISUAL_MAX,
+        },
+    }
+
+
+def payload_escenarios() -> Dict[str, Any]:
+    """Catálogo de escenarios experimentales con su verificación matemática."""
+    return {
+        "escenarios": escenarios_publicables(),
+        "escenario_inicial": ESCENARIO_INICIAL,
     }
 
 
@@ -232,12 +270,17 @@ def construir_payload(config: SimulationConfig, res: SimulationResults) -> Dict[
         "tiempo_final": float(res.tiempo_final),
         "semilla": res.semilla,
         "cola_inicial": int(res.cola_inicial),
+        "limite_cola": int(res.limite_cola),
         "pasajeros_llegados_total": int(res.pasajeros_llegados_total),
         "autobuses_llegados_total": int(res.autobuses_llegados_total),
         "pasajeros_transportados_total": int(res.pasajeros_transportados_total),
         "pasajeros_restantes_cola": int(res.pasajeros_restantes_cola),
         "cola_maxima": int(res.cola_maxima),
         "cola_media_temporal": float(res.cola_media_temporal),
+        "tiempo_saturacion_operativa": (
+            None if res.tiempo_saturacion_operativa is None else float(res.tiempo_saturacion_operativa)
+        ),
+        "minutos_en_saturacion": float(res.minutos_en_saturacion),
         "espera_media_abordados": float(res.espera_media_abordados),
         "espera_mediana_abordados": float(res.espera_mediana_abordados),
         "espera_p90": float(res.espera_p90),
@@ -253,8 +296,11 @@ def construir_payload(config: SimulationConfig, res: SimulationResults) -> Dict[
         "rho_estrella": _numero_finito(config.rho_estrella),
         "mu_efectiva": float(config.mu_efectiva),
         "asientos_libres_esperados": float(config.asientos_libres_esperados),
+        "capacidad_efectiva": float(config.capacidad_efectiva),
         "alpha_gamma": _numero_finito(config.alpha_gamma),
         "theta_gamma": float(config.theta_gamma),
+        "umbral_alta_utilizacion": UMBRAL_ALTA_UTILIZACION,
+        "tolerancia_critico": TOLERANCIA_CRITICO,
     }
     config_json = {
         "lambda_p": float(config.lambda_p),
@@ -266,10 +312,17 @@ def construir_payload(config: SimulationConfig, res: SimulationResults) -> Dict[
         "cola_inicial": int(config.cola_inicial),
         "semilla": res.semilla,
         "num_repeticiones": int(config.num_repeticiones),
+        "limite_cola": int(config.limite_cola),
     }
+    # Clasificación matemática (fuente de verdad: el servidor) y estado
+    # operativo final de la ejecución (cola real frente al umbral Qmáx).
+    estado = clasificar_sistema(config.lambda_p, config.mu_efectiva)
+    estado_operativo = clasificar_operacion(res.cola_maxima, config.limite_cola)
     return {
         "config": config_json,
         "resultados": resultados,
+        "estado": estado,
+        "estado_operativo": estado_operativo,
         "metricas_teoricas": metricas_teoricas,
         "eventos": eventos,
         "serie_cola": [[float(t), int(q)] for t, q in res.serie_tiempo_cola],
@@ -285,5 +338,6 @@ def payload_replicas(config: SimulationConfig, num_repeticiones: int) -> Dict[st
     return {
         "num_repeticiones": int(num_repeticiones),
         "semilla_base": SEMILLA_BASE_REPLICAS,
+        "estado": clasificar_sistema(config.lambda_p, config.mu_efectiva),
         "metricas": {clave: float(valor) for clave, valor in resumen.items()},
     }

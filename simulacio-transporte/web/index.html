@@ -40,6 +40,17 @@
   <div class="disposicion">
     <aside class="panel panel--controles" aria-label="Configuración y reproducción">
       <section>
+        <h2 class="panel__titulo">Escenarios experimentales</h2>
+        <div class="bloque">
+          <label for="escenario-select" class="campo__etiqueta">Escenario</label>
+          <select id="escenario-select" class="campo__select"></select>
+          <p id="escenario-descripcion" class="campo__ayuda">Cargando catálogo de escenarios…</p>
+          <p id="escenario-condicion" class="escenario__condicion"></p>
+        </div>
+        <p class="info-modelo info-modelo--nota">Los escenarios son configuraciones experimentales ilustrativas del modelo. Al modificar un parámetro, la configuración pasa a «Personalizado».</p>
+      </section>
+
+      <section>
         <h2 class="panel__titulo">Parámetros del modelo</h2>
         <p id="info-modelo" class="info-modelo">Cargando parámetros…</p>
         <form id="form-parametros" novalidate>
@@ -91,6 +102,30 @@
     </aside>
 
     <main class="contenido">
+      <section id="estado-sistema" class="estado-sistema" data-severidad="inactivo" role="status" aria-live="polite">
+        <div class="estado-sistema__marca" aria-hidden="true"></div>
+        <div class="estado-sistema__cuerpo">
+          <h2 id="estado-sistema-titulo" class="estado-sistema__titulo">ESTADO DEL SISTEMA: SIN DATOS</h2>
+          <p id="estado-sistema-detalle" class="estado-sistema__detalle">Inicie una simulación para clasificar el sistema según su relación de carga ρ.</p>
+          <dl class="estado-sistema__cifras">
+            <div><dt>ρ</dt><dd id="estado-rho">—</dd></div>
+            <div><dt>λ (pas/min)</dt><dd id="estado-lambda">—</dd></div>
+            <div><dt>μ (pas/min)</dt><dd id="estado-mu">—</dd></div>
+            <div><dt>Q(t) / Qmáx</dt><dd id="estado-cola">—</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section id="panel-indicadores" class="panel" aria-label="Indicadores científicos del modelo">
+        <div class="panel__cabecera">
+          <h2>Indicadores científicos</h2>
+          <p>Relación de carga, capacidad efectiva y umbral operativo, calculados por el motor y verificados en cada ejecución.</p>
+        </div>
+        <div id="indicadores-contenido" class="indicadores">
+          <p class="nota">Aún no se ha ejecutado ninguna simulación.</p>
+        </div>
+      </section>
+
       <section class="tarjetas" aria-label="Indicadores en vivo del instante actual">
         <article class="tarjeta">
           <h3>Pasajeros llegados</h3>
@@ -161,6 +196,10 @@
           <div id="escena-aviso" class="escena__aviso" data-estado="cargando">
             <p class="escena__aviso-titulo">Preparando la escena 3D</p>
             <p class="escena__aviso-detalle">Cargando los modelos locales de autobús y pasajeros.</p>
+          </div>
+          <div id="escena-alerta" class="escena__alerta" data-estado="alerta" hidden role="alert">
+            <p class="escena__alerta-titulo"></p>
+            <p class="escena__alerta-detalle"></p>
           </div>
           <p class="escena__pista">Arrastre para orbitar · rueda para acercar</p>
         </div>
