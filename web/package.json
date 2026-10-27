@@ -1,0 +1,9 @@
+{
+  "name": "colabus-web",
+  "private": true,
+  "type": "module",
+  "description": "Interfaz web de la simulación de colas del transporte público (sin dependencias).",
+  "scripts": {
+    "test": "node --test"
+  }
+}
