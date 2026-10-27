@@ -206,34 +206,128 @@
       </section>
 
       <section class="graficos" aria-label="Gráficos en vivo">
-        <article class="panel grafico-panel">
-          <div class="panel__cabecera">
-            <h2>Evolución de la cola</h2>
-            <p>Pasajeros en espera frente al tiempo simulado (pasos discretos por evento).</p>
+        <article class="panel grafico-panel" data-grafico="cola">
+          <div class="panel__cabecera panel__cabecera--fila">
+            <div>
+              <h2>Evolución de la cola</h2>
+              <p>Pasajeros en espera frente al tiempo simulado (pasos discretos por evento).</p>
+            </div>
+            <button type="button" class="grafico-panel__ampliar" data-ampliar title="Ver en pantalla completa" aria-label="Ver evolución de la cola en pantalla completa" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
           </div>
           <canvas id="grafico-cola" role="img" aria-label="Gráfico de evolución de la cola"></canvas>
         </article>
-        <article class="panel grafico-panel">
-          <div class="panel__cabecera">
-            <h2>Llegadas y abordajes acumulados</h2>
-            <p>Demanda acumulada frente a pasajeros transportados y pendientes.</p>
+        <article class="panel grafico-panel" data-grafico="acumulados">
+          <div class="panel__cabecera panel__cabecera--fila">
+            <div>
+              <h2>Llegadas y abordajes acumulados</h2>
+              <p>Demanda acumulada frente a pasajeros transportados y pendientes.</p>
+            </div>
+            <button type="button" class="grafico-panel__ampliar" data-ampliar title="Ver en pantalla completa" aria-label="Ver llegadas y abordajes en pantalla completa" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
           </div>
           <canvas id="grafico-acumulados" role="img" aria-label="Gráfico de llegadas y abordajes acumulados"></canvas>
         </article>
-        <article class="panel grafico-panel">
-          <div class="panel__cabecera">
-            <h2>Tiempos de espera</h2>
-            <p>Esperas individuales de pasajeros abordados y su media acumulada (los que siguen esperando al final quedan censurados).</p>
+        <article class="panel grafico-panel" data-grafico="esperas">
+          <div class="panel__cabecera panel__cabecera--fila">
+            <div>
+              <h2>Tiempos de espera</h2>
+              <p>Esperas individuales de pasajeros abordados y su media acumulada (los que siguen esperando al final quedan censurados).</p>
+            </div>
+            <button type="button" class="grafico-panel__ampliar" data-ampliar title="Ver en pantalla completa" aria-label="Ver tiempos de espera en pantalla completa" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
           </div>
           <canvas id="grafico-esperas" role="img" aria-label="Gráfico de tiempos de espera"></canvas>
         </article>
-        <article class="panel grafico-panel">
-          <div class="panel__cabecera">
-            <h2>Capacidad de los autobuses</h2>
-            <p>Composición de cada autobús en su paso por la parada (últimos 14 llegados).</p>
+        <article class="panel grafico-panel" data-grafico="capacidad">
+          <div class="panel__cabecera panel__cabecera--fila">
+            <div>
+              <h2>Capacidad de los autobuses</h2>
+              <p>Composición de cada autobús en su paso por la parada (últimos 14 llegados).</p>
+            </div>
+            <button type="button" class="grafico-panel__ampliar" data-ampliar title="Ver en pantalla completa" aria-label="Ver capacidad de los autobuses en pantalla completa" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
           </div>
           <canvas id="grafico-capacidad" role="img" aria-label="Gráfico de capacidad de los autobuses"></canvas>
         </article>
+      </section>
+
+      <section id="comparacion" class="panel comparacion" aria-label="Comparación de los 3 casos base">
+        <div class="panel__cabecera panel__cabecera--fila">
+          <div>
+            <h2>Comparación de los 3 casos base</h2>
+            <p>Los tres primeros escenarios del catálogo, ejecutados con réplicas reproducibles y la misma semilla base para mantener condiciones comparables.</p>
+          </div>
+          <button id="btn-comparar" type="button" class="boton" disabled>Comparar los 3 casos base</button>
+        </div>
+        <p id="comparacion-estado" class="nota">Pendiente. Pulse «Comparar los 3 casos base» para ejecutar el motor y construir el análisis comparativo.</p>
+
+        <div id="comparacion-resumen" class="comparacion__resumen"></div>
+
+        <div id="comparacion-indicadores" class="tarjetas tarjetas--comparacion"></div>
+
+        <p id="comparacion-aviso" class="aviso aviso--advertencia" hidden></p>
+
+        <div class="graficos">
+          <article class="panel grafico-panel" data-grafico="comparacionCola">
+            <div class="panel__cabecera panel__cabecera--fila">
+              <div>
+                <h2>G1 · Evolución de la fila por escenario</h2>
+                <p>Tamaño medio de la cola frente al tiempo simulado (rejilla común de 101 puntos). Pulse la leyenda para mostrar u ocultar cada caso.</p>
+              </div>
+              <button type="button" class="grafico-panel__ampliar" data-ampliar title="Ver en pantalla completa" aria-label="Ver evolución de la fila por escenario en pantalla completa" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+            <canvas id="comparacion-cola" role="img" aria-label="Gráfico comparativo de la evolución de la fila"></canvas>
+          </article>
+          <article class="panel grafico-panel" data-grafico="comparacionBoxplot">
+            <div class="panel__cabecera panel__cabecera--fila">
+              <div>
+                <h2>G2 · Distribución de los tamaños de cola</h2>
+                <p>Diagrama de cajas de los tamaños de cola registrados en cada escenario (mín., P25, mediana, P75, máx.). Complementa la media temporal del gráfico G1.</p>
+              </div>
+              <button type="button" class="grafico-panel__ampliar" data-ampliar title="Ver en pantalla completa" aria-label="Ver distribución de los tamaños de cola en pantalla completa" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+            <canvas id="comparacion-boxplot" role="img" aria-label="Gráfico comparativo de la distribución de los tamaños de cola"></canvas>
+          </article>
+          <article class="panel grafico-panel" data-grafico="comparacionEsperas">
+            <div class="panel__cabecera panel__cabecera--fila">
+              <div>
+                <h2>G3 · Tiempos de espera de los pasajeros abordados</h2>
+                <p>Distribución de las esperas completadas (min). El rombo marca la media y la línea la mediana. No incluye a los pasajeros que seguían esperando al final.</p>
+              </div>
+              <button type="button" class="grafico-panel__ampliar" data-ampliar title="Ver en pantalla completa" aria-label="Ver tiempos de espera en pantalla completa" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+            <canvas id="comparacion-esperas" role="img" aria-label="Gráfico comparativo de tiempos de espera"></canvas>
+          </article>
+          <article class="panel grafico-panel" data-grafico="comparacionDemanda">
+            <div class="panel__cabecera panel__cabecera--fila">
+              <div>
+                <h2>G4 · Pasajeros llegados frente a transportados</h2>
+                <p>Acumulados medios por escenario. Línea continua: pasajeros que llegaron; línea discontinua: pasajeros efectivamente transportados. La separación indica acumulación pendiente.</p>
+              </div>
+              <button type="button" class="grafico-panel__ampliar" data-ampliar title="Ver en pantalla completa" aria-label="Ver pasajeros llegados frente a transportados en pantalla completa" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+            <canvas id="comparacion-demanda" role="img" aria-label="Gráfico comparativo de pasajeros llegados frente a transportados"></canvas>
+          </article>
+        </div>
+
+        <div class="comparacion__tabla-bloque">
+          <h3 class="comparacion__tabla-titulo">Tabla 4. Comparación estadística de los escenarios</h3>
+          <div id="comparacion-tabla" class="comparacion__tabla-envoltorio"></div>
+          <p id="comparacion-tabla-nota" class="nota"></p>
+        </div>
       </section>
 
       <section class="panel" aria-label="Resultados finales">

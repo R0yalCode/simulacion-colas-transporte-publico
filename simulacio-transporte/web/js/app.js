@@ -10,6 +10,15 @@ import { api } from './api.js';
 import { EscenaParada } from './escena.js';
 import { EscenaParada3D } from './escena3d.js';
 import { crearGraficos } from './graficos.js';
+import { conectarPantallaCompleta } from './pantalla-completa.js';
+import {
+  GraficoComparacionBoxplot,
+  GraficoComparacionCola,
+  GraficoComparacionDemanda,
+  GraficoComparacionEsperas,
+  normalizarComparacion,
+  renderizarComparacion,
+} from './comparacion.js';
 import { RegistroEventos } from './registro.js';
 import { RelojSimulado, VELOCIDADES, VELOCIDAD_INICIAL, MINUTOS_POR_SEGUNDO_BASE } from './reloj.js';
 import { Ejecucion, estadisticasDeEstado, csvEventos, csvResumen } from './simulacion.js';
@@ -61,14 +70,19 @@ const estado = {
   replicasAbortador: null,
   ultimoT: -1,
   ultimoGrafico: -1,
+  ultimoGraficoReal: -Infinity,
   sucio: true,
   snapPendiente: true,
   arrastrandoLinea: false,
   faseUI: null,
+  comparacion: null,
+  comparacionCargando: false,
+  comparacionAbortador: null,
 };
 
 let escena = null;
 let graficos = null;
+let graficosComparacion = null;
 let registro = null;
 let ultimoAria = 0;
 /** Referencias a las filas dinámicas del panel de indicadores científicos. */
@@ -142,6 +156,13 @@ function obtenerRefs() {
     'btn-csv-eventos',
     'btn-csv-resumen',
     'info-modelo',
+    'btn-comparar',
+    'comparacion-estado',
+    'comparacion-resumen',
+    'comparacion-indicadores',
+    'comparacion-aviso',
+    'comparacion-tabla',
+    'comparacion-tabla-nota',
   ];
   for (const id of ids) refs[id] = document.getElementById(id);
 }
@@ -192,6 +213,8 @@ async function iniciar() {
   obtenerRefs();
   escena = await crearEscena();
   graficos = crearGraficos();
+  graficosComparacion = crearGraficosComparacion();
+  conectarPantallaCompleta({ ...graficos, ...graficosComparacion });
   registro = new RegistroEventos(refs['registro'], { limite: 60 });
   conectarControles();
   observarRedimensionado();
@@ -484,6 +507,8 @@ function cargarEjecucion(payload) {
   estado.reloj = new RelojSimulado({ duracion: estado.ejecucion.duracion, velocidad: estado.velocidad });
   estado.ultimoT = -1;
   estado.ultimoGrafico = -1;
+  estado.ultimoGraficoReal = -Infinity;
+  if (graficos && graficos.cola) graficos.cola.reiniciarEscala();
   estado.snapPendiente = true;
   estado.sucio = true;
   estado.arrastrandoLinea = false;
@@ -567,9 +592,17 @@ function actualizarVista(t, ahora, { snap = false, forzarGraficos = false } = {}
   }
   setTexto(refs['tiempo-actual'], formatearReloj(t));
   registro.actualizar(eje, t);
-  if (forzarGraficos || t < estado.ultimoGrafico || t - estado.ultimoGrafico >= 0.1) {
+  const retrocesoGrafico = t < estado.ultimoGrafico - 1e-9;
+  const intervaloGrafico = t - estado.ultimoGrafico >= 0.1;
+  const finalGrafico = eje.duracion > 0 && t >= eje.duracion - 1e-9 && t > estado.ultimoGrafico + 1e-9;
+  if (
+    forzarGraficos ||
+    retrocesoGrafico ||
+    ((intervaloGrafico || finalGrafico) && ahora - estado.ultimoGraficoReal >= 50)
+  ) {
     actualizarGraficos(t, eje, stats);
     estado.ultimoGrafico = t;
+    estado.ultimoGraficoReal = ahora;
   }
   if (ahora - ultimoAria > 1000) {
     actualizarAria(stats, bus);
@@ -842,7 +875,21 @@ function conectarControles() {
 
   refs['btn-replicas'].addEventListener('click', () => ejecutarReplicas());
 
+  if (refs['btn-comparar']) {
+    refs['btn-comparar'].addEventListener('click', () => ejecutarComparacion());
+  }
+
   refs['banner-error-cerrar'].addEventListener('click', () => ocultarBanner());
+}
+
+/** Crea las cuatro gráficas comparativas del apartado de casos base. */
+function crearGraficosComparacion() {
+  return {
+    comparacionCola: new GraficoComparacionCola(document.getElementById('comparacion-cola')),
+    comparacionBoxplot: new GraficoComparacionBoxplot(document.getElementById('comparacion-boxplot')),
+    comparacionEsperas: new GraficoComparacionEsperas(document.getElementById('comparacion-esperas')),
+    comparacionDemanda: new GraficoComparacionDemanda(document.getElementById('comparacion-demanda')),
+  };
 }
 
 function actualizarVelocidadUI() {
@@ -895,6 +942,13 @@ function refrescarControles() {
   refs['btn-csv-resumen'].disabled = !hay;
   refs['btn-replicas'].disabled = !hay || estado.replicasCargando;
   setTexto(refs['btn-replicas'], estado.replicasCargando ? 'Calculando réplicas…' : 'Ejecutar réplicas (modo acelerado)');
+  if (refs['btn-comparar']) {
+    refs['btn-comparar'].disabled = !estado.parametros || estado.comparacionCargando;
+    setTexto(
+      refs['btn-comparar'],
+      estado.comparacionCargando ? 'Ejecutando réplicas…' : 'Comparar los 3 casos base',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -1032,6 +1086,181 @@ function limpiarReplicas() {
     refs['replicas-estado'],
     'Pendiente. Las réplicas promedian varias semillas sin animación (modo acelerado) y no alteran la ejecución en curso.',
   );
+}
+
+// ---------------------------------------------------------------------
+// Comparación de los 3 casos base
+// ---------------------------------------------------------------------
+
+async function ejecutarComparacion() {
+  if (estado.comparacionCargando) return;
+  if (estado.comparacionAbortador) estado.comparacionAbortador.abort();
+  const abortador = new AbortController();
+  estado.comparacionAbortador = abortador;
+  estado.comparacionCargando = true;
+  refrescarControles();
+  setTexto(refs['comparacion-estado'], 'Ejecutando réplicas de los tres casos base…');
+  try {
+    const payload = await api.comparar({ num_repeticiones: 20 }, abortador.signal);
+    if (abortador.signal.aborted) return;
+    aplicarComparacion(normalizarComparacion(payload));
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    setTexto(refs['comparacion-estado'], `No se pudo completar la comparación: ${error.message}`);
+  } finally {
+    if (estado.comparacionAbortador === abortador) estado.comparacionAbortador = null;
+    estado.comparacionCargando = false;
+    refrescarControles();
+  }
+}
+
+/** Vuelca el resultado normalizado en gráficas, tarjetas y tabla. */
+function aplicarComparacion(datos) {
+  estado.comparacion = datos;
+  const vista = renderizarComparacion(datos);
+  setTexto(
+    refs['comparacion-estado'],
+    `Modo acelerado: ${datos.numRepeticiones} réplicas por caso con semillas ${datos.semillaBase}…` +
+      `${datos.semillaBase + datos.numRepeticiones - 1}. Cada serie es la media de las réplicas y no altera ninguna ejecución en curso.`,
+  );
+
+  const tiempoMax = Math.max(...datos.casos.map((caso) => caso.duracion), 0);
+  const comun = {
+    casos: datos.casos,
+    rejilla: datos.casos[0] ? datos.casos[0].rejilla : [],
+    duracion: tiempoMax,
+    tiempo: tiempoMax,
+    visibles: null,
+  };
+  graficosComparacion.comparacionCola.fijarDatos(comun);
+  graficosComparacion.comparacionBoxplot.fijarDatos(comun);
+  graficosComparacion.comparacionEsperas.fijarDatos(comun);
+  graficosComparacion.comparacionDemanda.fijarDatos(comun);
+
+  renderResumenComparacion(vista.resumen, vista.indicadores);
+
+  const aviso = refs['comparacion-aviso'];
+  if (aviso) {
+    aviso.textContent = vista.advertencia;
+    aviso.hidden = false;
+  }
+
+  renderTablaComparacion(vista.tabla, datos);
+  estado.sucio = true;
+}
+
+/** Tarjetas de resumen por escenario + indicadores comparativos. */
+function renderResumenComparacion(resumen, indicadores) {
+  const contenedor = refs['comparacion-resumen'];
+  if (contenedor) {
+    const fragmento = document.createDocumentFragment();
+    for (const caso of resumen) {
+      const articulo = document.createElement('article');
+      articulo.className = 'caso-resumen';
+      articulo.style.borderLeftColor = caso.color;
+      const cabecera = document.createElement('div');
+      cabecera.className = 'caso-resumen__cabecera';
+      const punto = document.createElement('span');
+      punto.className = 'caso-resumen__punto';
+      punto.style.background = caso.color;
+      const nombre = document.createElement('span');
+      nombre.className = 'caso-resumen__nombre';
+      nombre.textContent = caso.nombre;
+      const estadoPill = document.createElement('span');
+      estadoPill.className = 'caso-resumen__estado';
+      estadoPill.dataset.severidad = caso.severidad || 'inactivo';
+      estadoPill.textContent = caso.estado || '—';
+      cabecera.append(punto, nombre, estadoPill);
+      const cifras = document.createElement('dl');
+      cifras.className = 'caso-resumen__cifras';
+      const filas = [
+        ['λ', `${formatearNumero(caso.lambda, 2)} pas/min`],
+        ['ρ', caso.rho === null ? '∞' : formatearNumero(caso.rho, 2)],
+        ['Duración', formatearReloj(caso.duracion)],
+      ];
+      for (const [etiqueta, valor] of filas) {
+        const dt = document.createElement('dt');
+        dt.textContent = etiqueta;
+        const dd = document.createElement('dd');
+        dd.textContent = valor;
+        cifras.append(dt, dd);
+      }
+      articulo.append(cabecera, cifras);
+      fragmento.appendChild(articulo);
+    }
+    contenedor.replaceChildren(fragmento);
+  }
+
+  const contenedorInd = refs['comparacion-indicadores'];
+  if (contenedorInd) {
+    const fragmento = document.createDocumentFragment();
+    for (const indicador of indicadores) {
+      const articulo = document.createElement('article');
+      articulo.className = 'tarjeta';
+      articulo.style.borderLeftColor = indicador.color;
+      const titulo = document.createElement('h3');
+      titulo.textContent = indicador.etiqueta;
+      const valor = document.createElement('p');
+      valor.className = 'tarjeta__valor';
+      valor.style.fontSize = '17px';
+      valor.textContent = indicador.valor;
+      const pie = document.createElement('p');
+      pie.className = 'tarjeta__pie';
+      pie.textContent = indicador.caso;
+      articulo.append(titulo, valor, pie);
+      fragmento.appendChild(articulo);
+    }
+    contenedorInd.replaceChildren(fragmento);
+  }
+}
+
+/** Tabla 4 con los indicadores válidos de cada caso base. */
+function renderTablaComparacion(filas, datos) {
+  const contenedor = refs['comparacion-tabla'];
+  if (!contenedor) return;
+  const tabla = document.createElement('table');
+  tabla.className = 'comparacion-tabla';
+  const thead = document.createElement('thead');
+  const filaCabecera = document.createElement('tr');
+  const thIndicador = document.createElement('th');
+  thIndicador.scope = 'col';
+  thIndicador.textContent = 'Indicador';
+  filaCabecera.appendChild(thIndicador);
+  for (const caso of datos.casos) {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = caso.etiqueta;
+    filaCabecera.appendChild(th);
+  }
+  thead.appendChild(filaCabecera);
+
+  const tbody = document.createElement('tbody');
+  for (const linea of filas) {
+    const tr = document.createElement('tr');
+    const th = document.createElement('th');
+    th.scope = 'row';
+    th.textContent = linea.etiqueta;
+    const unidad = document.createElement('span');
+    unidad.textContent = linea.unidad;
+    th.appendChild(unidad);
+    tr.appendChild(th);
+    for (const celda of linea.valores) {
+      const td = document.createElement('td');
+      td.dataset.disponible = celda.disponible ? 'true' : 'false';
+      td.textContent = celda.texto;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  tabla.append(thead, tbody);
+  contenedor.replaceChildren(tabla);
+  const nota = refs['comparacion-tabla-nota'];
+  if (nota) {
+    nota.textContent =
+      `Valores medios de ${datos.numRepeticiones} réplicas por caso (semilla base ${datos.semillaBase}). ` +
+      'El porcentaje transportado se calcula como transportados/llegados; el pendiente, como restantes/(transportados+restantes). ' +
+      'No se calcula significación estadística: es una comparación descriptiva.';
+  }
 }
 
 function mostrarBanner(mensaje, permitirReintento = false) {

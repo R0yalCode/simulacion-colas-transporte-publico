@@ -10,6 +10,7 @@ Endpoints:
 - GET  /api/parametros   Metadatos del formulario (l\u00edmites, unidades, defectos).
 - POST /api/simular      Ejecuta el motor y devuelve eventos, series y resultados.
 - POST /api/replicas     Ejecuta N r\u00e9plicas reproducibles (modo acelerado).
+- POST /api/comparar     Compara los tres casos base con r\u00e9plicas reproducibles.
 - GET  /*                Archivos est\u00e1ticos de web/ (index.html por defecto).
 """
 
@@ -38,6 +39,7 @@ from server.schema import (
     ParametroInvalido,
     config_desde_payload,
     construir_payload,
+    payload_comparacion,
     payload_escenarios,
     payload_parametros,
     payload_replicas,
@@ -117,6 +119,9 @@ def _crear_manejador(raiz_web: Path) -> Type[BaseHTTPRequestHandler]:
             config = config_desde_payload(datos)
             self._json(200, payload_replicas(config, config.num_repeticiones))
 
+        def _comparar(self, datos: Dict[str, Any]) -> None:
+            self._json(200, payload_comparacion(datos))
+
         # ---------- archivos estáticos ----------
 
         def _estatico(self, ruta: str) -> None:
@@ -166,6 +171,8 @@ def _crear_manejador(raiz_web: Path) -> Type[BaseHTTPRequestHandler]:
                     self._simular(datos)
                 elif ruta == "/api/replicas":
                     self._replicas(datos)
+                elif ruta == "/api/comparar":
+                    self._comparar(datos)
                 else:
                     self._error(404, "Endpoint no encontrado.")
             except ParametroInvalido as exc:

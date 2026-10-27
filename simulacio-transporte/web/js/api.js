@@ -36,4 +36,5 @@ export const api = {
   parametros: () => solicitar('/api/parametros'),
   simular: (config, senal) => solicitar('/api/simular', { metodo: 'POST', cuerpo: config, senal }),
   replicas: (config, senal) => solicitar('/api/replicas', { metodo: 'POST', cuerpo: config, senal }),
+  comparar: (opciones, senal) => solicitar('/api/comparar', { metodo: 'POST', cuerpo: opciones, senal }),
 };

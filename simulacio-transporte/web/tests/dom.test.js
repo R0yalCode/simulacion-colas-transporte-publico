@@ -99,3 +99,24 @@ test('los modelos 3D y la copia local de Three.js existen', () => {
     assert.ok(existsSync(join(raiz, ruta)), `falta ${ruta}`);
   }
 });
+
+test('cada gráfica incluye su propio botón de pantalla completa', () => {
+  for (const clave of ['cola', 'acumulados', 'esperas', 'capacidad']) {
+    const bloque = html.split(`data-grafico="${clave}"`)[1];
+    assert.ok(bloque, `falta el panel del gráfico ${clave}`);
+    const articulo = bloque.split('</article>')[0];
+    assert.match(articulo, /data-ampliar/, `el gráfico ${clave} no tiene botón de ampliación`);
+    assert.match(articulo, new RegExp(`id="grafico-${clave}"`), `el botón no corresponde al canvas ${clave}`);
+  }
+  assert.equal([...html.matchAll(/data-ampliar/g)].length, 8);
+  assert.match(appJs, /conectarPantallaCompleta\(\{ \.\.\.graficos, \.\.\.graficosComparacion \}\)/);
+});
+
+test('los cuatro gráficos comparativos tienen panel y botón de ampliación', () => {
+  for (const clave of ['comparacionCola', 'comparacionBoxplot', 'comparacionEsperas', 'comparacionDemanda']) {
+    const bloque = html.split(`data-grafico="${clave}"`)[1];
+    assert.ok(bloque, `falta el panel del gráfico comparativo ${clave}`);
+    const articulo = bloque.split('</article>')[0];
+    assert.match(articulo, /data-ampliar/, `el gráfico ${clave} no tiene botón de ampliación`);
+  }
+});

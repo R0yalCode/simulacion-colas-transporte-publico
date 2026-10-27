@@ -375,12 +375,15 @@ class SimulationEngine:
         cola_antes = self._cola.tamano()
         abordados = min(cola_antes, asientos_libres)
         ids_abordados: List[int] = []
+        esperas_abordados: List[Dict[str, float]] = []
         for _ in range(abordados):
             pasajero = self._cola.quitar_pasajero()
             pasajero.abordo = True
             pasajero.tiempo_abordaje = tiempo
             ids_abordados.append(pasajero.id)
-            self._res.tiempos_espera_abordados.append(max(0.0, tiempo - pasajero.tiempo_llegada))
+            espera = max(0.0, tiempo - pasajero.tiempo_llegada)
+            self._res.tiempos_espera_abordados.append(espera)
+            esperas_abordados.append({"tiempo": float(tiempo), "espera": float(espera)})
         self._res.pasajeros_transportados_total += abordados
         self._res.autobuses_llegados_total += 1
         self._res.num_autobuses_registrados += 1
@@ -399,6 +402,7 @@ class SimulationEngine:
                 "cola_antes": cola_antes,
                 "abordados": abordados,
                 "pasajeros_abordados_ids": ids_abordados,
+                "esperas_abordados": esperas_abordados,
                 "transportados": self._res.pasajeros_transportados_total,
                 "cola": self._cola.tamano(),
             }
@@ -527,3 +531,196 @@ def comparar_escenarios(
         fila.update(resumen_metricas(resultados))
         filas.append(fila)
     return filas
+
+
+# ---------------------------------------------------------------------------
+# Comparación de los tres casos base
+# ---------------------------------------------------------------------------
+
+#: Número de escenarios base que compara el apartado de la interfaz.
+NUM_CASOS_BASE = 3
+
+#: Semilla base de las réplicas de comparación: la misma para los tres casos
+#: mantiene las condiciones experimentales comparables entre escenarios.
+SEMILLA_COMPARACION = 12345
+
+
+def promedio_series_cola(
+    resultados: List[SimulationResults], rejilla: List[float]
+) -> List[float]:
+    """Cola media de varias réplicas evaluada en los instantes de `rejilla`.
+
+    Usa interpolación escalonada *hacia atrás*: el valor en cada instante es el
+    último tamaño de cola registrado (el estado material del sistema). No genera
+    valores intermedios ni suaviza artificialmente las series.
+    """
+    if not resultados or not rejilla:
+        return [0.0 for _ in rejilla]
+    series = [r.serie_tiempo_cola for r in resultados]
+    acumulado = [0.0 for _ in rejilla]
+    for serie in series:
+        if not serie:
+            continue
+        cursor = 0
+        ultimo = serie[0][1]
+        for i, t in enumerate(rejilla):
+            while cursor < len(serie) and serie[cursor][0] <= t + 1e-9:
+                ultimo = serie[cursor][1]
+                cursor += 1
+            acumulado[i] += ultimo
+    n = float(len(series))
+    return [valor / n for valor in acumulado]
+
+
+def puntos_espera(resultados: List[SimulationResults]) -> List[Tuple[float, float]]:
+    """Esperas individuales (tiempo, espera_min) de los pasajeros abordados.
+
+    No incluye a los pasajeros que siguen esperando al final de la ejecución:
+    su tiempo de espera no está cerrado y no debe tratarse como definitivo.
+    """
+    puntos: List[Tuple[float, float]] = []
+    for r in resultados:
+        for bus in r.historial_eventos:
+            if bus.get("tipo") != "autobus":
+                continue
+            for espera in bus.get("esperas_abordados", []):
+                puntos.append((float(espera["tiempo"]), float(espera["espera"])))
+    puntos.sort(key=lambda p: p[0])
+    return puntos
+
+
+def espera_percentil(valores: List[float], p: float) -> float:
+    """Percentil con interpolación lineal; 0.0 si no hay observaciones."""
+    if not valores:
+        return 0.0
+    return float(np.percentile(valores, p))
+
+
+def resumen_comparacion(resultados: List[SimulationResults]) -> Dict[str, float]:
+    """Métricas medias y agregadas de un escenario sobre varias réplicas."""
+    if not resultados:
+        return {}
+    resumen = resumen_metricas(resultados)
+    esperas = [w for r in resultados for w in r.tiempos_espera_abordados]
+    resumen["espera_mediana"] = (
+        float(statistics.median(esperas)) if esperas else 0.0
+    )
+    resumen["espera_p90"] = espera_percentil(esperas, 90)
+    resumen["espera_p95"] = espera_percentil(esperas, 95)
+    resumen["espera_maxima"] = float(max(esperas)) if esperas else 0.0
+    resumen["num_pasajeros_abordados"] = float(len(esperas))
+    llegadas = float(resumen.get("pasajeros_llegados", 0.0))
+    transportados = float(resumen.get("pasajeros_transportados", 0.0))
+    resumen["pct_transportados"] = (
+        100.0 * transportados / llegadas if llegadas > 0 else 0.0
+    )
+    # Desviaciones típicas de los percentiles de espera (para la tabla).
+    for nombre, funcion in (
+        ("espera_mediana", lambda r: r.espera_mediana_abordados),
+        ("espera_p90", lambda r: r.espera_p90),
+        ("espera_p95", lambda r: r.espera_p95),
+        ("espera_maxima", lambda r: r.espera_maxima_abordados),
+    ):
+        valores = [float(funcion(r)) for r in resultados]
+        resumen[f"{nombre}_std"] = (
+            float(np.std(valores, ddof=1)) if len(valores) > 1 else 0.0
+        )
+    restantes = float(resumen.get("pasajeros_restantes", 0.0))
+    total = transportados + restantes
+    resumen["pct_restantes"] = 100.0 * restantes / total if total > 0 else 0.0
+    return resumen
+
+
+def comparar_casos_base(
+    escenarios: List[Tuple[str, str, SimulationConfig]],
+    num_repeticiones: int,
+    semilla_base: int = SEMILLA_COMPARACION,
+) -> List[Dict[str, Any]]:
+    """Compara los casos base sobre réplicas reproducibles con semilla común.
+
+    Devuelve, por escenario, sus parámetros, semillas usadas, las series medias
+    (rejilla común de tiempo, cola media, acumulados) y los puntos de espera
+    individuales de los pasajeros abordados. No mezcla datos entre escenarios.
+    """
+    if not escenarios:
+        return []
+    semillas = [semilla_base + i for i in range(num_repeticiones)]
+    duracion = max(float(config.duracion) for _, _, config in escenarios)
+    rejilla = [round(duracion * k / 100.0, 6) for k in range(101)]
+
+    casos: List[Dict[str, Any]] = []
+    for id_, nombre, config in escenarios:
+        resultados = ejecutar_repeticiones(config, num_repeticiones, semilla_base)
+        cola_media = promedio_series_cola(resultados, rejilla)
+
+        # Acumulados medios (llegadas y transportados) evaluados en la rejilla.
+        llegadas_rejilla = [0.0 for _ in rejilla]
+        transportados_rejilla = [0.0 for _ in rejilla]
+        for r in resultados:
+            eventos = r.historial_eventos
+            llegados = 0
+            transportados = 0
+            idx = 0
+            for i, t in enumerate(rejilla):
+                while idx < len(eventos) and eventos[idx]["tiempo"] <= t + 1e-9:
+                    ev = eventos[idx]
+                    if ev["tipo"] == "pasajero":
+                        llegados += 1
+                    else:
+                        transportados += int(ev.get("abordados", 0))
+                    idx += 1
+                llegadas_rejilla[i] += llegados
+                transportados_rejilla[i] += transportados
+        n = float(len(resultados)) or 1.0
+        llegadas_rejilla = [v / n for v in llegadas_rejilla]
+        transportados_rejilla = [v / n for v in transportados_rejilla]
+
+        esperas = puntos_espera(resultados)
+        fechas = [p[0] for p in esperas]
+        valores = [p[1] for p in esperas]
+        esperas_media = [0.0 for _ in rejilla]
+        acum = 0.0
+        idx_w = 0
+        for i, t in enumerate(rejilla):
+            while idx_w < len(esperas) and esperas[idx_w][0] <= t + 1e-9:
+                acum += esperas[idx_w][1]
+                idx_w += 1
+            esperas_media[i] = acum / idx_w if idx_w > 0 else 0.0
+
+        casos.append(
+            {
+                "id": id_,
+                "nombre": nombre,
+                "parametros": {
+                    "lambda_p": float(config.lambda_p),
+                    "intervalo_promedio": float(config.intervalo_promedio),
+                    "coef_variacion": float(config.coef_variacion),
+                    "capacidad_autobus": int(config.capacidad_autobus),
+                    "prob_ocupacion": float(config.prob_ocupacion),
+                    "duracion": float(config.duracion),
+                    "cola_inicial": int(config.cola_inicial),
+                    "limite_cola": int(config.limite_cola),
+                },
+                "mu": float(config.mu_efectiva),
+                "rho": float(config.rho_estrella) if np.isfinite(config.rho_estrella) else None,
+                "clasificacion": clasificar_sistema(config.lambda_p, config.mu_efectiva),
+                "semillas": semillas,
+                "num_repeticiones": int(num_repeticiones),
+                "duracion": float(config.duracion),
+                "rejilla": rejilla,
+                "cola_media": cola_media,
+                "llegadas_acumuladas": llegadas_rejilla,
+                "transportados_acumulados": transportados_rejilla,
+                "esperas": {"tiempos": fechas, "valores": valores},
+                "espera_media_temporal": esperas_media,
+                "resumen": resumen_comparacion(resultados),
+                "serie_original": [
+                    {
+                        "semilla": r.semilla,
+                        "serie": [[float(t), int(q)] for t, q in r.serie_tiempo_cola],
+                    }
+                    for r in resultados
+                ],
+            }
+        )
+    return casos

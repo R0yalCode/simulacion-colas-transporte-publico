@@ -11,13 +11,17 @@ import math
 from typing import Any, Dict, List
 
 from models.simulation import (
+    NUM_CASOS_BASE,
+    SEMILLA_COMPARACION,
     SimulationConfig,
     SimulationResults,
+    comparar_casos_base,
     ejecutar_repeticiones,
     resumen_metricas,
 )
 from models.saturacion import (
     ESCENARIO_INICIAL,
+    ESCENARIOS,
     LIMITE_VISUAL_MAX,
     TOLERANCIA_CRITICO,
     UMBRAL_ALTA_UTILIZACION,
@@ -28,6 +32,8 @@ from models.saturacion import (
 
 SEMILLA_BASE_REPLICAS = 12345
 MAX_REPETICIONES = 100
+MAX_REPETICIONES_COMPARACION = 60
+REPETICIONES_COMPARACION_DEFECTO = 20
 MAX_EVENTOS_ADVERTENCIA = 20000
 
 
@@ -340,4 +346,74 @@ def payload_replicas(config: SimulationConfig, num_repeticiones: int) -> Dict[st
         "semilla_base": SEMILLA_BASE_REPLICAS,
         "estado": clasificar_sistema(config.lambda_p, config.mu_efectiva),
         "metricas": {clave: float(valor) for clave, valor in resumen.items()},
+    }
+
+
+def _replicas_comparacion(datos: Any) -> int:
+    """Número de réplicas de la comparación, validado contra el catálogo."""
+    if not isinstance(datos, dict):
+        raise ParametroInvalido("El cuerpo de la petición debe ser un objeto JSON.")
+    desconocidos = sorted(set(datos) - {"num_repeticiones", "casos"})
+    if desconocidos:
+        raise ParametroInvalido(f"Parámetros desconocidos: {', '.join(desconocidos)}.")
+    crudo = datos.get("num_repeticiones", REPETICIONES_COMPARACION_DEFECTO)
+    if crudo is None or crudo == "":
+        return REPETICIONES_COMPARACION_DEFECTO
+    repeticiones = _a_entero(crudo, "num_repeticiones")
+    if repeticiones < 1 or repeticiones > MAX_REPETICIONES_COMPARACION:
+        raise ParametroInvalido(
+            f"num_repeticiones: debe estar entre 1 y {MAX_REPETICIONES_COMPARACION}."
+        )
+    return repeticiones
+
+
+def _casos_base_solicitados(datos: Dict[str, Any]) -> List[str]:
+    """Identificadores de los escenarios base; por defecto, los tres primeros."""
+    ids_catalogo = [escenario.id for escenario in ESCENARIOS]
+    if "casos" not in datos or datos["casos"] in (None, ""):
+        return ids_catalogo[:NUM_CASOS_BASE]
+    crudos = datos["casos"]
+    if not isinstance(crudos, list) or not crudos:
+        raise ParametroInvalido("casos: se esperaba una lista no vacía de identificadores.")
+    ids: List[str] = []
+    for crudo in crudos:
+        if crudo not in ids_catalogo:
+            raise ParametroInvalido(f"casos: el escenario '{crudo}' no existe en el catálogo.")
+        ids.append(crudo)
+    return ids
+
+
+def payload_comparacion(datos: Any = None) -> Dict[str, Any]:
+    """Comparación de los casos base con réplicas reproducibles.
+
+    Ejecuta el motor para los escenarios base seleccionados (por defecto los
+    tres primeros del catálogo) usando la misma semilla base para todos, de modo
+    que las condiciones experimentales sean comparables. Devuelve, por caso,
+    parámetros, series medias, puntos de espera de los pasajeros abordados y un
+    resumen estadístico. No mezcla datos entre escenarios.
+    """
+    datos = datos if isinstance(datos, dict) else {}
+    repeticiones = _replicas_comparacion(datos)
+    ids = _casos_base_solicitados(datos)
+    escenarios = [
+        (
+            escenario.id,
+            escenario.nombre,
+            SimulationConfig(**dict(escenario.parametros)),
+        )
+        for escenario in ESCENARIOS
+        if escenario.id in ids
+    ]
+    # Conserva el orden solicitado.
+    orden = {id_: indice for indice, id_ in enumerate(ids)}
+    escenarios.sort(key=lambda item: orden[item[0]])
+
+    casos = comparar_casos_base(escenarios, repeticiones, SEMILLA_COMPARACION)
+    return {
+        "semilla_base": SEMILLA_COMPARACION,
+        "num_repeticiones": repeticiones,
+        "num_casos": len(casos),
+        "rejilla_pasos": 100,
+        "casos": casos,
+        "catalogo": escenarios_publicables(),
     }
