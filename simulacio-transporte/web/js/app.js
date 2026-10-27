@@ -98,6 +98,11 @@ function obtenerRefs() {
   const ids = [
     'estado-pill',
     'velocidad-chip',
+    'panel-controles',
+    'btn-toggle-controles',
+    'btn-indicadores',
+    'modal-indicadores',
+    'modal-cerrar',
     'escenario-select',
     'escenario-descripcion',
     'escenario-condicion',
@@ -880,6 +885,53 @@ function conectarControles() {
   }
 
   refs['banner-error-cerrar'].addEventListener('click', () => ocultarBanner());
+
+  conectarModalIndicadores();
+  conectarPanelControles();
+}
+
+/**
+ * Modal accesible de indicadores científicos: abrirlo o cerrarlo no reinicia
+ * la simulación ni toca el estado del motor; solo muestra u oculta la capa.
+ */
+function conectarModalIndicadores() {
+  const dialogo = refs['modal-indicadores'];
+  if (!dialogo) return;
+
+  const abrir = () => {
+    try {
+      if (typeof dialogo.showModal === 'function') dialogo.showModal();
+      else dialogo.classList.add('modal--abierto');
+    } catch {
+      dialogo.classList.add('modal--abierto');
+    }
+  };
+
+  const cerrar = () => {
+    if (typeof dialogo.close === 'function' && dialogo.open) dialogo.close();
+    dialogo.classList.remove('modal--abierto');
+  };
+
+  if (refs['btn-indicadores']) {
+    refs['btn-indicadores'].addEventListener('click', abrir);
+  }
+  if (refs['modal-cerrar']) {
+    refs['modal-cerrar'].addEventListener('click', cerrar);
+  }
+  dialogo.addEventListener('click', (evento) => {
+    if (evento.target === dialogo) cerrar();
+  });
+}
+
+/** En pantallas estrechas el panel de control se pliega mediante toggle. */
+function conectarPanelControles() {
+  const boton = refs['btn-toggle-controles'];
+  const panel = refs['panel-controles'];
+  if (!boton || !panel) return;
+  boton.addEventListener('click', () => {
+    const abierto = panel.classList.toggle('controles-abierto');
+    boton.setAttribute('aria-expanded', abierto ? 'true' : 'false');
+  });
 }
 
 /** Crea las cuatro gráficas comparativas del apartado de casos base. */
@@ -1263,8 +1315,18 @@ function renderTablaComparacion(filas, datos) {
   }
 }
 
+/**
+ * Muestra el banner de error solo cuando existe un mensaje real que
+ * comunicar. Con estado nulo, vacío o de solo espacios no se renderiza el
+ * contenedor (ni reserva espacio ni deja fondo residuo).
+ */
 function mostrarBanner(mensaje, permitirReintento = false) {
-  setTexto(refs['banner-error-texto'], mensaje);
+  const texto = (mensaje ?? '').trim();
+  if (!texto) {
+    ocultarBanner();
+    return;
+  }
+  setTexto(refs['banner-error-texto'], texto);
   refs['banner-error'].hidden = false;
   refs['banner-error-reintentar'].hidden = !permitirReintento;
   if (!permitirReintento) return;
@@ -1274,8 +1336,10 @@ function mostrarBanner(mensaje, permitirReintento = false) {
   };
 }
 
+/** Retira el banner y limpia su mensaje para no dejar estado obsoleto. */
 function ocultarBanner() {
   refs['banner-error'].hidden = true;
+  setTexto(refs['banner-error-texto'], '');
 }
 
 // ---------------------------------------------------------------------

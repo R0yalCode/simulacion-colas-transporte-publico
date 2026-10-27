@@ -120,3 +120,24 @@ test('los cuatro gráficos comparativos tienen panel y botón de ampliación', (
     assert.match(articulo, /data-ampliar/, `el gráfico ${clave} no tiene botón de ampliación`);
   }
 });
+
+const css = leer('css/styles.css');
+
+test('el banner de error sin mensaje declara hidden inicial y el CSS no lo desbloquea', () => {
+  // Causa del recuadro rojo vacío: display:flex del autor anulaba la regla
+  // UA [hidden]{display:none}. El banner arranca oculto y así debe seguirse
+  // mostrando (Caso 1: servidor disponible, sin alerta alguna).
+  assert.match(html, /<div id="banner-error"[^>]*hidden[^>]*>/);
+  assert.match(css, /\.banner\[hidden\]\s*\{[^}]*display:\s*none/);
+});
+
+test('mostrarBanner no renderiza el contenedor con mensajes vacíos o en blanco', () => {
+  // El mensaje solo se pinta si existe texto real; con '' o '   ' debe
+  // ocultarse, no quedar un contenedor rojo sin contenido.
+  const cuerpoMostrar = appJs.match(/function mostrarBanner\(mensaje[\s\S]*?\n\}/)[0];
+  const cuerpoOcultar = appJs.match(/function ocultarBanner\(\)[\s\S]*?\n\}/)[0];
+  assert.match(cuerpoMostrar, /trim\(\)/, 'mostrarBanner debe recortar el mensaje entrante');
+  assert.match(cuerpoMostrar, /if\s*\(!texto\)\s*\{\s*ocultarBanner\(\);?\s*return;?/, 'con mensaje vacío debe ocultarse y no renderizar');
+  assert.match(cuerpoOcultar, /hidden = true/, 'ocultarBanner retira el contenedor con hidden');
+  assert.match(cuerpoOcultar, /setTexto\(refs\['banner-error-texto'\], ''\)/, 'ocultarBanner limpia el texto para no dejar estado obsoleto');
+});

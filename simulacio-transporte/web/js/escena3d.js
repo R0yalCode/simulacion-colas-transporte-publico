@@ -353,8 +353,8 @@ export class EscenaParada3D {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
 
     this.escena = new THREE.Scene();
-    this.escena.background = new THREE.Color(0x0d1826);
-    this.escena.fog = new THREE.Fog(0x162536, 58, 150);
+    this.escena.background = new THREE.Color(0x0f172a);
+    this.escena.fog = new THREE.Fog(0x1a2b45, 58, 150);
 
     this.camaras = {};
     this.camaraActiva = 'calle';

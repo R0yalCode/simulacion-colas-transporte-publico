@@ -10,18 +10,18 @@
 import { clamp, formatearNumero, formatearReloj } from './util.js';
 
 export const PALETA = {
-  panel: '#0f1826',
-  rejilla: '#1c2939',
-  eje: '#2a3a4f',
-  texto: '#a5b5c7',
-  tenue: '#5f7288',
-  claro: '#e7edf7',
-  cian: '#43d1d0',
-  espera: '#40d7dd',
-  verde: '#5ee0a4',
-  amarillo: '#ffc368',
-  rojo: '#ff8c97',
-  ocupado: '#55688a',
+  panel: '#12203a',
+  rejilla: 'rgba(148, 163, 184, 0.14)',
+  eje: 'rgba(148, 163, 184, 0.32)',
+  texto: '#c3cede',
+  tenue: 'rgba(143, 162, 186, 0.75)',
+  claro: '#f1f5f9',
+  cian: '#22d3ee',
+  espera: '#38d9e8',
+  verde: '#34d399',
+  amarillo: '#fbbf24',
+  rojo: '#fb7185',
+  ocupado: '#5b7599',
 };
 
 export const FUENTE = "Inter, ui-sans-serif, system-ui, 'Segoe UI', Arial, sans-serif";
@@ -210,7 +210,7 @@ export class GraficoBase {
       ctx.beginPath();
       ctx.arc(x, y, 3.2, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = '#0a101b';
+      ctx.strokeStyle = '#0f172a';
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
@@ -253,7 +253,7 @@ export class GraficoBase {
     let y = cursor.y + 12;
     if (x + anchoCaja > ancho - 6) x = cursor.x - anchoCaja - 12;
     if (y + altoCaja > alto - 6) y = cursor.y - altoCaja - 12;
-    ctx.fillStyle = 'rgba(9, 15, 26, 0.94)';
+    ctx.fillStyle = 'rgba(10, 16, 30, 0.96)';
     this._rectangulo(x, y, anchoCaja, altoCaja, 7);
     ctx.fill();
     ctx.strokeStyle = acento;
@@ -343,14 +343,14 @@ export class GraficoCola extends GraficoBase {
       const y = this._aY(area, umbral, yMax);
       ctx.save();
       ctx.setLineDash([6, 5]);
-      ctx.strokeStyle = 'rgba(255, 140, 151, 0.75)';
+      ctx.strokeStyle = 'rgba(251, 113, 133, 0.75)';
       ctx.lineWidth = 1.4;
       ctx.beginPath();
       ctx.moveTo(area.x, y);
       ctx.lineTo(area.x + area.ancho, y);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = 'rgba(255, 140, 151, 0.9)';
+      ctx.fillStyle = 'rgba(251, 113, 133, 0.9)';
       ctx.font = '600 10px Inter, Segoe UI, Arial, sans-serif';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'bottom';
@@ -375,8 +375,8 @@ export class GraficoCola extends GraficoBase {
     ctx.lineTo(this._aX(area, serie[serie.length - 1][0], duracion), area.y + area.alto);
     ctx.closePath();
     const gradiente = ctx.createLinearGradient(0, area.y, 0, area.y + area.alto);
-    gradiente.addColorStop(0, 'rgba(67, 209, 208, 0.22)');
-    gradiente.addColorStop(1, 'rgba(67, 209, 208, 0.02)');
+    gradiente.addColorStop(0, 'rgba(34, 211, 238, 0.24)');
+    gradiente.addColorStop(1, 'rgba(34, 211, 238, 0.02)');
     ctx.fillStyle = gradiente;
     ctx.fill();
 
@@ -453,7 +453,7 @@ export class GraficoEsperas extends GraficoBase {
     const yMax = Math.max(5, Math.ceil((esperas.maximo * 1.15) / 5) * 5);
     this._marco(area, { xMax: duracion, yMax, etiquetaY: 'espera por pasajero (min)' });
 
-    ctx.fillStyle = 'rgba(64, 215, 221, 0.85)';
+    ctx.fillStyle = 'rgba(56, 217, 232, 0.85)';
     for (const punto of esperas.puntos) {
       const x = this._aX(area, punto.t, duracion);
       const y = this._aY(area, punto.w, yMax);
@@ -544,7 +544,7 @@ export class GraficoCapacidad extends GraficoBase {
       ctx.fillRect(x, base - altoOcupado, anchoBarra, altoOcupado);
       ctx.fillStyle = PALETA.verde;
       ctx.fillRect(x, base - altoOcupado - altoAbordados, anchoBarra, altoAbordados);
-      ctx.fillStyle = 'rgba(67, 209, 208, 0.16)';
+      ctx.fillStyle = 'rgba(34, 211, 238, 0.16)';
       ctx.fillRect(x, base - altoOcupado - altoAbordados - altoLibre, anchoBarra, altoLibre);
       ctx.globalAlpha = 1;
     });
