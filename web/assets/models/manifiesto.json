@@ -1,0 +1,22 @@
+{
+  "generado_por": "web/scripts/generar-recursos.mjs",
+  "licencia": "Obra original del proyecto (uso académico y educativo)",
+  "modelos": [
+    {
+      "archivo": "autobus.glb",
+      "clips": [
+        "puertas_abrir",
+        "puertas_cerrar"
+      ],
+      "descripcion": "Autobús urbano articulado con puertas correderas."
+    },
+    {
+      "archivo": "pasajero.glb",
+      "clips": [
+        "reposo",
+        "caminar"
+      ],
+      "descripcion": "Pasajero humano articulado con variantes de color y proporción."
+    }
+  ]
+}
