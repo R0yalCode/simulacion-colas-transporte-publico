@@ -10,25 +10,25 @@
 import { clamp, formatearNumero, formatearReloj } from './util.js';
 
 export const PALETA = {
-  panel: '#0f1826',
-  rejilla: '#1c2939',
-  eje: '#2a3a4f',
-  texto: '#a5b5c7',
-  tenue: '#5f7288',
-  claro: '#e7edf7',
-  cian: '#43d1d0',
-  espera: '#40d7dd',
-  verde: '#5ee0a4',
-  amarillo: '#ffc368',
-  rojo: '#ff8c97',
-  ocupado: '#55688a',
+  panel: '#12203a',
+  rejilla: 'rgba(148, 163, 184, 0.14)',
+  eje: 'rgba(148, 163, 184, 0.32)',
+  texto: '#c3cede',
+  tenue: 'rgba(143, 162, 186, 0.75)',
+  claro: '#f1f5f9',
+  cian: '#22d3ee',
+  espera: '#38d9e8',
+  verde: '#34d399',
+  amarillo: '#fbbf24',
+  rojo: '#fb7185',
+  ocupado: '#5b7599',
 };
 
-const FUENTE = "Inter, ui-sans-serif, system-ui, 'Segoe UI', Arial, sans-serif";
+export const FUENTE = "Inter, ui-sans-serif, system-ui, 'Segoe UI', Arial, sans-serif";
 
-const MARGEN = { arriba: 26, derecha: 14, abajo: 26, izquierda: 44 };
+export const MARGEN = { arriba: 26, derecha: 14, abajo: 26, izquierda: 44 };
 
-function pasoBonito(rango, objetivo = 4) {
+export function pasoBonito(rango, objetivo = 4) {
   if (!Number.isFinite(rango) || rango <= 0) return 1;
   const crudo = rango / objetivo;
   const magnitud = Math.pow(10, Math.floor(Math.log10(crudo)));
@@ -41,7 +41,26 @@ function pasoBonito(rango, objetivo = 4) {
   return paso * magnitud;
 }
 
-class GraficoBase {
+/**
+ * Escala vertical adaptativa para datos no negativos.
+ *
+ * El límite se calcula solo con los datos observados (no con el umbral Qmáx) y
+ * se redondea a un paso legible. El margen es proporcional al máximo real y
+ * nunca se convierte en un tope fijo. Se mantiene un mínimo de 5 pasajeros para
+ * que una cola vacía siga teniendo una cuadrícula legible.
+ */
+export function escalaYAdaptativa(valorMaximo, { minimo = 5, margen = 0.12 } = {}) {
+  const maximoDatos = Number(valorMaximo);
+  if (!Number.isFinite(maximoDatos) || maximoDatos <= 0) {
+    return { maximo: minimo, paso: 1 };
+  }
+  const paso = Math.max(1, pasoBonito(maximoDatos, 5));
+  const conMargen = maximoDatos * (1 + Math.max(0, margen));
+  const maximo = Math.ceil(conMargen / paso) * paso;
+  return { maximo, paso };
+}
+
+export class GraficoBase {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
@@ -63,6 +82,11 @@ class GraficoBase {
 
   fijarDatos(datos) {
     this.datos = datos;
+    this._programar();
+  }
+
+  /** Fuerza un redibujado conservando los datos (cambios de tamaño, fullscreen). */
+  redibujar() {
     this._programar();
   }
 
@@ -102,9 +126,9 @@ class GraficoBase {
 
   // ---------- primitivas ----------
 
-  _marco(area, { xMax, yMax, etiquetaY, xTick = (v) => formatearReloj(v) }) {
+  _marco(area, { xMax, yMax, etiquetaY, xTick = (v) => formatearReloj(v), pasoY: pasoFijo }) {
     const { ctx } = this;
-    const pasoY = pasoBonito(yMax, 4);
+    const pasoY = pasoFijo || pasoBonito(yMax, 4);
     ctx.strokeStyle = PALETA.rejilla;
     ctx.lineWidth = 1;
     ctx.font = `500 9.5px ${FUENTE}`;
@@ -186,7 +210,7 @@ class GraficoBase {
       ctx.beginPath();
       ctx.arc(x, y, 3.2, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = '#0a101b';
+      ctx.strokeStyle = '#0f172a';
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
@@ -229,7 +253,7 @@ class GraficoBase {
     let y = cursor.y + 12;
     if (x + anchoCaja > ancho - 6) x = cursor.x - anchoCaja - 12;
     if (y + altoCaja > alto - 6) y = cursor.y - altoCaja - 12;
-    ctx.fillStyle = 'rgba(9, 15, 26, 0.94)';
+    ctx.fillStyle = 'rgba(10, 16, 30, 0.96)';
     this._rectangulo(x, y, anchoCaja, altoCaja, 7);
     ctx.fill();
     ctx.strokeStyle = acento;
@@ -270,13 +294,79 @@ class GraficoBase {
 // --------------------------------------------------------------------
 
 export class GraficoCola extends GraficoBase {
+  constructor(canvas) {
+    super(canvas);
+    this._escala = null;
+    this._tiempoEscala = null;
+  }
+
+  /** Olvida la escala retenida al comenzar una ejecución nueva. */
+  reiniciarEscala() {
+    this._escala = null;
+    this._tiempoEscala = null;
+  }
+
+  /**
+   * Escala estable: crece de inmediato si aparecen colas mayores, pero no
+   * oscila mientras el tiempo avanza. Al retroceder en la línea de tiempo (o
+   * reiniciar) se recalcula desde los datos visibles.
+   */
+  _escalaPara(serie, tiempo, colaActual) {
+    let maximoDatos = Math.max(0, Number(colaActual) || 0);
+    for (const [, q] of serie) {
+      if (Number.isFinite(q) && q > maximoDatos) maximoDatos = q;
+    }
+    const candidata = escalaYAdaptativa(maximoDatos);
+    const retroceso = this._tiempoEscala === null || tiempo < this._tiempoEscala - 1e-9;
+    if (this._escala === null || retroceso || candidata.maximo > this._escala.maximo + 1e-9) {
+      this._escala = candidata;
+    }
+    this._tiempoEscala = tiempo;
+    return this._escala;
+  }
+
   _dibujarContenido(ctx, area) {
-    const { serie, tiempo, duracion, colaActual } = this.datos;
-    let colaMax = 1;
-    for (const [, q] of serie) if (q > colaMax) colaMax = q;
-    const yMax = Math.max(1, Math.ceil((colaMax * 1.15) / 5) * 5);
-    this._marco(area, { xMax: duracion, yMax, etiquetaY: 'pasajeros en cola (pas.)' });
-    if (serie.length === 0) return;
+    const { serie, tiempo, duracion, colaActual, limiteCola } = this.datos;
+    const escala = this._escalaPara(serie, tiempo, colaActual);
+    const yMax = escala.maximo;
+    const umbral = Number(limiteCola) || 0;
+    this._marco(area, {
+      xMax: duracion,
+      yMax,
+      pasoY: escala.paso,
+      etiquetaY: 'pasajeros en cola (pas.)',
+    });
+
+    // El umbral operativo se dibuja solo cuando cabe en la escala observada.
+    // Nunca fuerza el eje a 150: Qmáx es una referencia, no el máximo visual.
+    if (umbral > 0 && umbral <= yMax + 1e-9) {
+      const y = this._aY(area, umbral, yMax);
+      ctx.save();
+      ctx.setLineDash([6, 5]);
+      ctx.strokeStyle = 'rgba(251, 113, 133, 0.75)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(area.x, y);
+      ctx.lineTo(area.x + area.ancho, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(251, 113, 133, 0.9)';
+      ctx.font = '600 10px Inter, Segoe UI, Arial, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(`Qmáx = ${umbral}`, area.x + area.ancho - 4, Math.max(area.y + 10, y - 3));
+      ctx.restore();
+    }
+
+    const sinDatos = serie.length === 0 || (tiempo <= 1e-9 && !serie.some(([t, q]) => t > 1e-9 || q > 0));
+    if (sinDatos) {
+      this._texto('La serie se dibujará al avanzar el tiempo simulado', area.x + area.ancho / 2, area.y + area.alto / 2, {
+        align: 'center',
+        color: PALETA.tenue,
+        font: `600 11px ${FUENTE}`,
+      });
+      return;
+    }
 
     const x0 = this._aX(area, serie[0][0], duracion);
     ctx.beginPath();
@@ -285,8 +375,8 @@ export class GraficoCola extends GraficoBase {
     ctx.lineTo(this._aX(area, serie[serie.length - 1][0], duracion), area.y + area.alto);
     ctx.closePath();
     const gradiente = ctx.createLinearGradient(0, area.y, 0, area.y + area.alto);
-    gradiente.addColorStop(0, 'rgba(67, 209, 208, 0.22)');
-    gradiente.addColorStop(1, 'rgba(67, 209, 208, 0.02)');
+    gradiente.addColorStop(0, 'rgba(34, 211, 238, 0.24)');
+    gradiente.addColorStop(1, 'rgba(34, 211, 238, 0.02)');
     ctx.fillStyle = gradiente;
     ctx.fill();
 
@@ -297,7 +387,8 @@ export class GraficoCola extends GraficoBase {
     });
 
     if (this.cursor) {
-      const t = clamp(((this.cursor.x - area.x) / area.ancho) * duracion, 0, duracion);
+      const tMax = Math.min(duracion, Math.max(0, Number(tiempo) || 0));
+      const t = clamp(((this.cursor.x - area.x) / area.ancho) * duracion, 0, tMax);
       let valor = 0;
       for (const [ti, q] of serie) {
         if (ti <= t + 1e-9) valor = q;
@@ -332,7 +423,8 @@ export class GraficoAcumulados extends GraficoBase {
     ]);
 
     if (this.cursor) {
-      const t = clamp(((this.cursor.x - area.x) / area.ancho) * duracion, 0, duracion);
+      const tMax = Math.min(duracion, Math.max(0, Number(tiempo) || 0));
+      const t = clamp(((this.cursor.x - area.x) / area.ancho) * duracion, 0, tMax);
       let indice = -1;
       for (let i = 0; i < acumulado.tiempos.length; i += 1) {
         if (acumulado.tiempos[i] <= t + 1e-9) indice = i;
@@ -361,7 +453,7 @@ export class GraficoEsperas extends GraficoBase {
     const yMax = Math.max(5, Math.ceil((esperas.maximo * 1.15) / 5) * 5);
     this._marco(area, { xMax: duracion, yMax, etiquetaY: 'espera por pasajero (min)' });
 
-    ctx.fillStyle = 'rgba(64, 215, 221, 0.85)';
+    ctx.fillStyle = 'rgba(56, 217, 232, 0.85)';
     for (const punto of esperas.puntos) {
       const x = this._aX(area, punto.t, duracion);
       const y = this._aY(area, punto.w, yMax);
@@ -452,7 +544,7 @@ export class GraficoCapacidad extends GraficoBase {
       ctx.fillRect(x, base - altoOcupado, anchoBarra, altoOcupado);
       ctx.fillStyle = PALETA.verde;
       ctx.fillRect(x, base - altoOcupado - altoAbordados, anchoBarra, altoAbordados);
-      ctx.fillStyle = 'rgba(67, 209, 208, 0.16)';
+      ctx.fillStyle = 'rgba(34, 211, 238, 0.16)';
       ctx.fillRect(x, base - altoOcupado - altoAbordados - altoLibre, anchoBarra, altoLibre);
       ctx.globalAlpha = 1;
     });
