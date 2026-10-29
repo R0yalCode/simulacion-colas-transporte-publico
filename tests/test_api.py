@@ -226,3 +226,57 @@ class TestReplicas:
         estado, datos = _post(base_url, "/api/replicas", dict(CONFIG_VALIDA, num_repeticiones=3))
         assert estado == 200
         assert datos["num_repeticiones"] == 3
+
+
+class TestComparar:
+    def test_payload_comparacion(self, base_url):
+        estado, datos = _post(base_url, "/api/comparar", {"num_repeticiones": 2})
+        assert estado == 200
+        assert set(datos) >= {
+            "num_repeticiones",
+            "semilla_base",
+            "num_casos",
+            "rejilla_pasos",
+            "casos",
+            "catalogo",
+        }
+        assert datos["num_repeticiones"] == 2
+        assert datos["num_casos"] == 3
+        assert datos["rejilla_pasos"] == 100
+        ids = [caso["id"] for caso in datos["casos"]]
+        assert ids == ["estable", "alta_utilizacion", "critico"]
+        for caso in datos["casos"]:
+            assert len(caso["semillas"]) == 2
+            assert caso["semillas"] == [datos["semilla_base"], datos["semilla_base"] + 1]
+            assert len(caso["rejilla"]) == 101
+            assert len(caso["cola_media"]) == 101
+            assert len(caso["llegadas_acumuladas"]) == 101
+            assert len(caso["transportados_acumulados"]) == 101
+            assert all(a <= b + 1e-9 for a, b in zip(caso["rejilla"], caso["rejilla"][1:]))
+
+    def test_resumen_metricas(self, base_url):
+        _, datos = _post(base_url, "/api/comparar", {"num_repeticiones": 2})
+        for caso in datos["casos"]:
+            resumen = caso["resumen"]
+            assert resumen["pasajeros_llegados"] >= 0
+            assert resumen["pasajeros_transportados"] <= resumen["pasajeros_llegados"]
+            assert resumen["espera_mediana"] <= resumen["espera_p90"] + 1e-9
+            assert resumen["espera_p90"] <= resumen["espera_maxima"] + 1e-9
+            assert resumen["pct_transportados"] + resumen["pct_restantes"] == pytest.approx(100.0, abs=0.01)
+
+    def test_reproducible(self, base_url):
+        _, uno = _post(base_url, "/api/comparar", {"num_repeticiones": 2})
+        _, dos = _post(base_url, "/api/comparar", {"num_repeticiones": 2})
+        assert uno == dos
+
+    def test_limite_repeticiones(self, base_url):
+        estado, _ = _post(base_url, "/api/comparar", {"num_repeticiones": 1000})
+        assert estado == 400
+
+    def test_casos_invalidos(self, base_url):
+        estado, _ = _post(base_url, "/api/comparar", {"num_repeticiones": 2, "casos": ["no_existe"]})
+        assert estado == 400
+
+    def test_repeticiones_invalidas(self, base_url):
+        estado, _ = _post(base_url, "/api/comparar", {"num_repeticiones": 0})
+        assert estado == 400

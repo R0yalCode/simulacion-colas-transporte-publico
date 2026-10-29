@@ -11,6 +11,7 @@
  */
 
 import { clamp } from './util.js';
+import { LIMITE_VISUAL_MAX } from './estado.js';
 
 /** Ventanas visuales máximas (en minutos simulados). */
 export const VENTANA_APROXIMACION_MAX = 2.0;
@@ -57,6 +58,12 @@ export class Ejecucion {
     this.serieCola = payload.serie_cola || [];
     this.duracion = Number(this.config.duracion) || 0;
     this.colaInicial = Number(this.config.cola_inicial) || 0;
+    /** Clasificación matemática calculada por el servidor (fuente de verdad). */
+    this.estado = payload.estado || null;
+    /** Estado operativo de la ejecución completa (cola real frente a Qmáx). */
+    this.estadoOperativo = payload.estado_operativo || null;
+    /** Umbral operativo Qmáx configurado para la ejecución. */
+    this.limiteCola = Number(this.config.limite_cola) || Number(this.resultados.limite_cola) || LIMITE_VISUAL_MAX;
 
     this.tiemposEventos = this.eventos.map((ev) => ev.tiempo);
     this.numPasajerosLlegados = 0;
@@ -391,6 +398,7 @@ export class Ejecucion {
  */
 export function estadisticasDeEstado(ejecucion, estado) {
   const t = estado.tiempo;
+  const limite = ejecucion.limiteCola || LIMITE_VISUAL_MAX;
   return {
     tiempo: t,
     duracion: ejecucion.duracion,
@@ -400,6 +408,8 @@ export function estadisticasDeEstado(ejecucion, estado) {
     transportados: estado.transportados,
     autobuses: estado.autobuses,
     colaMax: estado.colaMax,
+    limiteCola: limite,
+    saturado: estado.cola.length >= limite,
     esperaMedia: estado.numEsperas > 0 ? estado.sumaEsperas / estado.numEsperas : 0,
     esperaMax: estado.esperaMax,
     numEsperas: estado.numEsperas,
